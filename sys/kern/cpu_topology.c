@@ -267,7 +267,7 @@ print_cpu_topology_tree_sysctl_helper(cpu_node_t *node, struct sbuf *sb, char * 
 		buf[buf_len] = ' ';buf_len++;
 		buf[buf_len] = ' ';buf_len++;
 	} else {
-		sbuf_printf(sb, "\\-");
+		sbuf_printf(sb, "|-");
 		buf[buf_len] = '|';buf_len++;
 		buf[buf_len] = ' ';buf_len++;
 	}
@@ -311,7 +311,8 @@ print_cpu_topology_tree_sysctl(SYSCTL_HANDLER_ARGS)
 	if (sb == NULL) {
 		return (ENOMEM);
 	}
-	print_cpu_topology_tree_sysctl_helper(cpu_root_node, sb, buf, 0, 0);
+	sbuf_printf(sb,"\n");
+	print_cpu_topology_tree_sysctl_helper(cpu_root_node, sb, buf, 0, 1);
 
 	sbuf_finish(sb);
 
