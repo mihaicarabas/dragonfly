@@ -66,6 +66,11 @@
 #include <machine/globaldata.h>
 #include <machine/pmap_inval.h>
 
+#include <sys/sbuf.h>
+#include <sys/cpu_topology.h>
+
+#define INDENT_BUF_SIZE LEVEL_NO*3
+
 static cpu_node_t cpu_topology_nodes[MAXCPU];
 static cpu_node_t *cpu_root_node;
 
@@ -133,7 +138,6 @@ build_cpu_topology(void)
 	detect_cpu_topology();
 	int i;
 	int BSPID = 0;
-	int LEVEL_NO = 4;
 	int threads_per_core = 0;
 	int cores_per_chip = 0;
 	int chips_per_package = 0;
@@ -237,15 +241,15 @@ init_cpu_topology(void)
 {
 	cpu_root_node = build_cpu_topology();
 
-	sysctl_ctx_init(&topology_sysctl_ctx); 
+	sysctl_ctx_init(&cpu_topology_sysctl_ctx); 
 
-	cpu_topology_sysctl_tree = SYSCTL_ADD_NODE(&sc->acpi_sysctl_ctx,
+	cpu_topology_sysctl_tree = SYSCTL_ADD_NODE(&cpu_topology_sysctl_ctx,
 					SYSCTL_STATIC_CHILDREN(_hw),
 					OID_AUTO,
 					"cpu_topology",
 					CTLFLAG_RD, 0, "");
 
-	SYSCTL_ADD_PROC(&topology_sysctl_ctx, SYSCTL_CHILDREN(cpu_topology_sysctl_tree),
+	SYSCTL_ADD_PROC(&cpu_topology_sysctl_ctx, SYSCTL_CHILDREN(cpu_topology_sysctl_tree),
 			OID_AUTO, "tree", CTLTYPE_STRING | CTLFLAG_RD,
 			NULL, 0, print_cpu_topology_tree_sysctl, "A", "Tree print of CPU topology");
 
@@ -254,19 +258,44 @@ init_cpu_topology(void)
 static void
 print_cpu_topology_tree_sysctl_helper(cpu_node_t *node, struct sbuf *sb, char * buf, int buf_len, int last)
 {
+	int i;
+	int bsr_member;
+
 	sbuf_bcat(sb, buf, buf_len);
 	if (last) {
 		sbuf_printf(sb, "\\-");
 		buf[buf_len] = ' ';buf_len++;
 		buf[buf_len] = ' ';buf_len++;
 	} else {
-		sbuf_printf(sb, "\-");
+		sbuf_printf(sb, "\\-");
 		buf[buf_len] = '|';buf_len++;
 		buf[buf_len] = ' ';buf_len++;
 	}
-	sbuf_printf(sb,"%d",node->members);
+	
+	bsr_member = BSRCPUMASK(node->members);
+
+	if (node->type == PACKAGE_LEVEL) {
+		sbuf_printf(sb,"PACKAGE MEMBERS: ");
+	} else if (node->type == CHIP_LEVEL) {
+		sbuf_printf(sb,"CHIP ID %d: ",
+			get_chip_ID(bsr_member));
+	} else if (node->type == CORE_LEVEL) {
+		sbuf_printf(sb,"CORE ID %d: ",
+			get_core_number_within_chip(bsr_member));
+	} else if (node->type == THREAD_LEVEL) {
+		sbuf_printf(sb,"THREAD ID %d: ",
+		get_logical_CPU_number_within_core(bsr_member));
+	} else {
+		sbuf_printf(sb,"UNKNOWN: ");
+	}
+	CPUSET_FOREACH(i, node->members) {
+		sbuf_printf(sb,"cpu%d ", i);
+	}	
+	
+	sbuf_printf(sb,"\n");
+
 	for (i = 0; i < node->child_no; i++) {
-		print_cpu_topology_tree_sysctl_helper(node->child_node[i], sb, buf, buf_len, i == (node->childno -1));
+		print_cpu_topology_tree_sysctl_helper(&(node->child_node[i]), sb, buf, buf_len, i == (node->child_no -1));
 	}
 }
 static int
@@ -274,8 +303,7 @@ print_cpu_topology_tree_sysctl(SYSCTL_HANDLER_ARGS)
 {
 	struct sbuf *sb;
 	int ret;
-	int indent = 60;
-	char buf[400];
+	char buf[INDENT_BUF_SIZE];
 
 	KASSERT(cpu_root_node != NULL, ("cpu_root_node isn't initialized"));
 
