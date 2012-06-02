@@ -13,11 +13,9 @@ struct cpu_node {
 };
 typedef struct cpu_node cpu_node_t;
 
-cpu_node_t * build_cpu_topology	(void);
-cpumask_t get_cpumask_from_level(cpu_node_t * root,
-			int cpuid,
+cpumask_t get_cpumask_from_level(int cpuid,
 			uint8_t level_type);
-void init_cpu_topology(void);
+//void init_cpu_topology(void);
 
 #define LEVEL_NO 4
 

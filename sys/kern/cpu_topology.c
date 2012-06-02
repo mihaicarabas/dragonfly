@@ -74,7 +74,8 @@
 static cpu_node_t cpu_topology_nodes[MAXCPU];
 static cpu_node_t *cpu_root_node;
 
-static int print_cpu_topology_tree_sysctl(SYSCTL_HANDLER_ARGS);
+static struct sysctl_ctx_list cpu_topology_sysctl_ctx;
+static struct sysctl_oid *cpu_topology_sysctl_tree;
 
 /************************************/
 /* CPU TOPOLOGY BUILDING  FUNCTIONS */
@@ -132,7 +133,7 @@ build_topology_tree(int *children_no_per_level,
  * chip,core and logical IDs of each CPU with the IDs of the 
  * BSP. When we found a match, at that level the CPUs are siblings.
  */
-cpu_node_t *
+static cpu_node_t *
 build_cpu_topology(void)
 {
 	detect_cpu_topology();
@@ -192,69 +193,7 @@ build_cpu_topology(void)
 	return root;
 }
 
-/* Find a cpu_node_t by a mask */
-static cpu_node_t *
-get_cpu_node_by_cpumask(cpu_node_t * node,
-			cpumask_t mask) {
-
-	cpu_node_t * found = NULL;
-	int i;
-
-	if (node->members == mask) {
-		return node;
-	}
-
-	for (i = 0; i < node->child_no; i++) {
-		found = get_cpu_node_by_cpumask(&(node->child_node[i]), mask);
-		if (found != NULL) {
-			return found;
-		}
-	}
-	return NULL;
-}
-
-/* Get the mask of siblings for level_type of a cpuid */
-cpumask_t
-get_cpumask_from_level(cpu_node_t * root,
-			int cpuid,
-			uint8_t level_type)
-{
-	cpu_node_t * node;
-	cpumask_t mask = CPUMASK(cpuid);
-	node = get_cpu_node_by_cpumask(root, mask);
-	if (node == NULL) {
-		return 0;
-	}
-	while (node != NULL) {
-		if (node->type == level_type) {
-			return node->members;
-		}
-		node = node->parent_node;
-	}
-	return 0;
-}
-static struct sysctl_ctx_list cpu_topology_sysctl_ctx;
-static struct sysctl_oid *cpu_topology_sysctl_tree;
-
-void
-init_cpu_topology(void)
-{
-	cpu_root_node = build_cpu_topology();
-
-	sysctl_ctx_init(&cpu_topology_sysctl_ctx); 
-
-	cpu_topology_sysctl_tree = SYSCTL_ADD_NODE(&cpu_topology_sysctl_ctx,
-					SYSCTL_STATIC_CHILDREN(_hw),
-					OID_AUTO,
-					"cpu_topology",
-					CTLFLAG_RD, 0, "");
-
-	SYSCTL_ADD_PROC(&cpu_topology_sysctl_ctx, SYSCTL_CHILDREN(cpu_topology_sysctl_tree),
-			OID_AUTO, "tree", CTLTYPE_STRING | CTLFLAG_RD,
-			NULL, 0, print_cpu_topology_tree_sysctl, "A", "Tree print of CPU topology");
-
-}
-
+/* Recursive function helper to print the CPU topology tree */
 static void
 print_cpu_topology_tree_sysctl_helper(cpu_node_t *node, struct sbuf *sb, char * buf, int buf_len, int last)
 {
@@ -298,6 +237,8 @@ print_cpu_topology_tree_sysctl_helper(cpu_node_t *node, struct sbuf *sb, char * 
 		print_cpu_topology_tree_sysctl_helper(&(node->child_node[i]), sb, buf, buf_len, i == (node->child_no -1));
 	}
 }
+
+/* SYSCTL PROCEDURE for printing the CPU Topology tree */
 static int
 print_cpu_topology_tree_sysctl(SYSCTL_HANDLER_ARGS)
 {
@@ -322,3 +263,72 @@ print_cpu_topology_tree_sysctl(SYSCTL_HANDLER_ARGS)
 
 	return ret;	
 }
+
+/* Find a cpu_node_t by a mask */
+static cpu_node_t *
+get_cpu_node_by_cpumask(cpu_node_t * node,
+			cpumask_t mask) {
+
+	cpu_node_t * found = NULL;
+	int i;
+
+	if (node->members == mask) {
+		return node;
+	}
+
+	for (i = 0; i < node->child_no; i++) {
+		found = get_cpu_node_by_cpumask(&(node->child_node[i]), mask);
+		if (found != NULL) {
+			return found;
+		}
+	}
+	return NULL;
+}
+
+/* Get the mask of siblings for level_type of a cpuid */
+cpumask_t
+get_cpumask_from_level(int cpuid,
+			uint8_t level_type)
+{
+	cpu_node_t * node;
+	cpumask_t mask = CPUMASK(cpuid);
+
+	KASSERT(cpu_root_node != NULL, ("cpu_root_node isn't initialized"));
+
+	node = get_cpu_node_by_cpumask(cpu_root_node, mask);
+
+	if (node == NULL) {
+		return 0;
+	}
+
+	while (node != NULL) {
+		if (node->type == level_type) {
+			return node->members;
+		}
+		node = node->parent_node;
+	}
+
+	return 0;
+}
+
+/* Build the CPU Topology and SYSCTL Topology tree */
+static void
+init_cpu_topology(void)
+{
+	cpu_root_node = build_cpu_topology();
+
+	sysctl_ctx_init(&cpu_topology_sysctl_ctx); 
+
+	cpu_topology_sysctl_tree = SYSCTL_ADD_NODE(&cpu_topology_sysctl_ctx,
+					SYSCTL_STATIC_CHILDREN(_hw),
+					OID_AUTO,
+					"cpu_topology",
+					CTLFLAG_RD, 0, "");
+
+	SYSCTL_ADD_PROC(&cpu_topology_sysctl_ctx, SYSCTL_CHILDREN(cpu_topology_sysctl_tree),
+			OID_AUTO, "tree", CTLTYPE_STRING | CTLFLAG_RD,
+			NULL, 0, print_cpu_topology_tree_sysctl, "A", "Tree print of CPU topology");
+
+}
+SYSINIT(cpu_topology, SI_BOOT2_CPU_TOPOLOGY, SI_ORDER_FIRST,
+	init_cpu_topology, NULL)

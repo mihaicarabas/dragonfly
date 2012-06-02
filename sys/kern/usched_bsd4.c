@@ -1331,7 +1331,7 @@ sched_thread_cpu_init(void)
 
     if (bootverbose)
 	kprintf("start scheduler helpers on cpus:");
-	init_cpu_topology();
+    
     for (i = 0; i < ncpus; ++i) {
 	bsd4_pcpu_t dd = &bsd4_pcpu[i];
 	cpumask_t mask = CPUMASK(i);
