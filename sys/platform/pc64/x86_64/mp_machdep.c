@@ -176,7 +176,6 @@ static u_int	bootMP_size;
 /* Local data for detecting CPU TOPOLOGY */
 static int core_bits = 0;
 static int logical_CPU_bits = 0;
-static cpu_node_t cpu_topology_nodes[MAXCPU];
 
 
 /*
@@ -1132,7 +1131,9 @@ detect_intel_topology(int count_htt_cores)
 	int shift = 0;
 	int ecx_index = 0;
 	int core_plus_logical_bits = 0;
-	int apic_id_no;
+	int cores_per_package;
+	int logical_per_package;
+	int logical_per_core;
 	unsigned int p[4];
 
 	if (cpu_high >= 0xb) {
@@ -1175,10 +1176,15 @@ FUNC_B:
 
 FUNC_4:
 	cpuid_count(0x4, 0, p);
-	apic_id_no = FUNC_4_MAX_CORE_NO(p[0]);
-	for (shift = 0; (1 << shift) < count_htt_cores; ++shift);
-	logical_CPU_bits = 1 << shift;
-	core_bits = apic_id_no >> logical_CPU_bits;
+	cores_per_package = FUNC_4_MAX_CORE_NO(p[0]) + 1;
+	logical_per_package = count_htt_cores;
+	logical_per_core = logical_per_package / cores_per_package;
+	
+	for (shift = 0; (1 << shift) < logical_per_core; ++shift);
+	logical_CPU_bits = shift;
+
+	for (shift = 0; (1 << shift) < cores_per_package; ++shift);
+	core_bits = shift;
 
 	return;
 }
@@ -1200,15 +1206,15 @@ detect_amd_topology(int count_htt_cores)
 		} else {
 			core_bits = (cpu_procinfo2 & AMDID_CMP_CORES) + 1;
 			for (shift = 0; (1 << shift) < core_bits; ++shift);
-			core_bits = 1 << shift;
+			core_bits = shift;
 		}
 
 		logical_CPU_bits = count_htt_cores >> core_bits;
 		for (shift = 0; (1 << shift) < logical_CPU_bits; ++shift);
-		logical_CPU_bits = 1 << shift;
+		logical_CPU_bits = shift;
 	} else {
 		for (shift = 0; (1 << shift) < count_htt_cores; ++shift);
-		core_bits = 1 << shift;
+		core_bits = shift;
 		logical_CPU_bits = 0;
 	}
 }
@@ -1219,8 +1225,9 @@ detect_amd_topology(int count_htt_cores)
  * With the values above (for AMD or INTEL) we are able to generally
  * detect the CPU topology (number of cores for each level):
  * Ref: http://wiki.osdev.org/Detecting_CPU_Topology_(80x86)
+ * Ref: http://www.multicoreinfo.com/research/papers/whitepapers/Intel-detect-topology.pdf
  */
-static void
+void
 detect_cpu_topology(void)
 {
 	static int topology_detected = 0;
@@ -1248,179 +1255,26 @@ OUT:
 	topology_detected = 1;
 }
 
-/* Helper functions to calculate chip_ID,
+/* Interface functions to calculate chip_ID,
  * core_number and logical_number
  * Ref: http://wiki.osdev.org/Detecting_CPU_Topology_(80x86)
  */
-static inline int
+int
 get_chip_ID(int cpuid)
 {
 	return CPUID_TO_APICID(cpuid) &  ~( (1 << (logical_CPU_bits+core_bits) ) -1);
 }
 
-static inline int
+int
 get_core_number_within_chip(int cpuid)
 {
 	return (CPUID_TO_APICID(cpuid) >> logical_CPU_bits)
 		& ( (1 << core_bits) -1);
 }
 
-static inline int
+int
 get_logical_CPU_number_within_core(int cpuid)
 {
 	return CPUID_TO_APICID(cpuid)
 		& ( (1 << logical_CPU_bits) -1);
 }
-
-
-/* Generic topology tree.
- * @param children_no_per_level : the number of children on each level
- * @param level_types : the type of the level (THREAD, CORE, CHIP, etc)
- * @param cur_level : the current level of the tree
- * @param node : the current node
- * @param last_free_node : the last free node in the global array.
- * @param cpuid : basicly this are the ids of the leafs
- */ 
-static void
-build_topology_tree(int *children_no_per_level,
-		uint8_t *level_types,
-		int cur_level,
-		cpu_node_t *node,
-		cpu_node_t **last_free_node,
-		int *cpuid)
-{
-	int i;
-
-	node->child_no = children_no_per_level[cur_level];
-	node->type = level_types[cur_level];
-	node->members = 0;
-
-	if (node->child_no == 0) {
-		node->child_node = NULL;
-		node->members = CPUMASK(*cpuid);
-		(*cpuid)++;
-		return;
-	}
-
-	node->child_node = *last_free_node;
-	(*last_free_node) += node->child_no;
-	
-	for (i = 0; i< node->child_no; i++) {
-
-		node->child_node[i].parent_node = node;
-
-		build_topology_tree(children_no_per_level,
-				level_types,
-				cur_level + 1,
-				&(node->child_node[i]),
-				last_free_node,
-				cpuid);
-
-		node->members |= node->child_node[i].members;
-	}
-}
-
-/* Build CPU topology. The detection is made by comparing the
- * chip,core and logical IDs of each CPU with the IDs of the 
- * BSP. When we found a match, at that level the CPUs are siblings.
- */
-cpu_node_t *
-build_cpu_topology(void)
-{
-	detect_cpu_topology();
-	int i;
-	int BSPID = 0;
-	int LEVEL_NO = 4;
-	int threads_per_core = 0;
-	int cores_per_chip = 0;
-	int chips_per_package = 0;
-	int children_no_per_level[LEVEL_NO];
-	uint8_t level_types[LEVEL_NO];
-	int cpuid = 0;
-
-	cpu_node_t *root = &cpu_topology_nodes[0];
-	cpu_node_t *last_free_node = root + 1;
-
-	/* Assume that the topology is uniform.
-	 * Find the number of siblings within chip
-	 * and witin core to build up the topology
-	 */
-	for (i = 0; i < ncpus; i++) {
-		
-		if (get_chip_ID(BSPID) == get_chip_ID(i)) {
-			cores_per_chip++;
-		}
-
-		if (get_core_number_within_chip(BSPID)
-			== get_core_number_within_chip(i)) {
-			threads_per_core++;
-		}
-		
-	}
-	chips_per_package = ncpus / (cores_per_chip * threads_per_core);
-
-	/* Init topo info.
-	 * For now we assume that we have a four level topology
-	 */
-	children_no_per_level[0] = chips_per_package;
-	children_no_per_level[1] = cores_per_chip;
-	children_no_per_level[2] = threads_per_core;
-	children_no_per_level[3] = 0;
-
-	level_types[0] = PACKAGE_LEVEL;
-	level_types[1] = CHIP_LEVEL;
-	level_types[2] = CORE_LEVEL;
-	level_types[3] = THREAD_LEVEL;
-
-	build_topology_tree(children_no_per_level,
-				level_types,
-				0,
-				root,
-				&last_free_node,
-				&cpuid);
-		
-	return root;
-}
-
-/* Find a cpu_node_t by a mask */
-static cpu_node_t *
-get_cpu_node_by_cpumask(cpu_node_t * node,
-			cpumask_t mask) {
-
-	cpu_node_t * found = NULL;
-	int i;
-
-	if (node->members == mask) {
-		return node;
-	}
-
-	for (i = 0; i < node->child_no; i++) {
-		found = get_cpu_node_by_cpumask(&(node->child_node[i]), mask);
-		if (found != NULL) {
-			return found;
-		}
-	}
-	return NULL;
-}
-
-/* Get the mask of siblings for level_type of a cpuid */
-cpumask_t
-get_cpumask_from_level(cpu_node_t * root,
-			int cpuid,
-			uint8_t level_type)
-{
-	cpu_node_t * node;
-	cpumask_t mask = CPUMASK(cpuid);
-	node = get_cpu_node_by_cpumask(root, mask);
-	if (node == NULL) {
-		return 0;
-	}
-	while (node != NULL) {
-		if (node->type == level_type) {
-			return node->members;
-		}
-		node = node->parent_node;
-	}
-	return 0;
-}
-

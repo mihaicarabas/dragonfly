@@ -83,32 +83,24 @@ int	cpu_send_ipiq_passive	(int);
 /* global data in init_smp.c */
 extern cpumask_t		smp_active_mask;
 
-/* CPU TOPOLOGY DATA AND FUNCTIONS */
-struct cpu_node {
-	struct cpu_node * parent_node;
-	struct cpu_node * child_node;
-	uint32_t child_no;
-	cpumask_t members;
-	uint8_t type;
-};
-typedef struct cpu_node cpu_node_t;
+/* Detect CPU topology bits */
+void detect_cpu_topology(void);
 
-cpu_node_t * build_cpu_topology	(void);
-cpumask_t get_cpumask_from_level(cpu_node_t * root,
-			int cpuid,
-			uint8_t level_type);
-
-/* Level type for CPU siblings */
-#define	PACKAGE_LEVEL	1
-#define	CHIP_LEVEL	2
-#define	CORE_LEVEL	3
-#define	THREAD_LEVEL	4
+/* Interface functions for IDs calculation */
+int get_chip_ID(int cpuid);
+int get_core_number_within_chip(int cpuid);
+int get_logical_CPU_number_within_core(int cpuid);
 
 
 #endif /* !LOCORE */
 #else	/* !SMP */
 
 #define	smp_active_mask	1	/* smp_active_mask always 1 on UP machines */
+
+/* Non-SMP systems - unique core id 0 */
+#define get_chip_ID(cpuid) 0
+#define get_core_number_within_chip(cpuid) 0
+#define get_logical_CPU_number_within_core(cpuid) 0
 
 #endif
 
