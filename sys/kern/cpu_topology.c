@@ -96,7 +96,7 @@ build_topology_tree(int *children_no_per_level,
 		int cur_level,
 		cpu_node_t *node,
 		cpu_node_t **last_free_node,
-		int *cpuid)
+		int *apicid)
 {
 	int i;
 
@@ -106,8 +106,8 @@ build_topology_tree(int *children_no_per_level,
 
 	if (node->child_no == 0) {
 		node->child_node = NULL;
-		node->members = CPUMASK(*cpuid);
-		(*cpuid)++;
+		node->members = CPUMASK(APICID_TO_CPUID(*apicid));
+		(*apicid)++;
 		return;
 	}
 
@@ -123,7 +123,7 @@ build_topology_tree(int *children_no_per_level,
 				cur_level + 1,
 				&(node->child_node[i]),
 				last_free_node,
-				cpuid);
+				apicid);
 
 		node->members |= node->child_node[i].members;
 	}
@@ -144,7 +144,7 @@ build_cpu_topology(void)
 	int chips_per_package = 0;
 	int children_no_per_level[LEVEL_NO];
 	uint8_t level_types[LEVEL_NO];
-	int cpuid = 0;
+	int apicid = 0;
 
 	cpu_node_t *root = &cpu_topology_nodes[0];
 	cpu_node_t *last_free_node = root + 1;
@@ -154,7 +154,13 @@ build_cpu_topology(void)
 	 * and witin core to build up the topology
 	 */
 	for (i = 0; i < ncpus; i++) {
-		
+
+		cpumask_t mask = CPUMASK(i);
+
+		if ((mask & smp_active_mask) == 0){
+			continue;
+		}
+
 		if (get_chip_ID(BSPID) == get_chip_ID(i)) {
 			cores_per_chip++;
 		} else {
@@ -169,27 +175,57 @@ build_cpu_topology(void)
 	}
 	cores_per_chip /= threads_per_core;
 	chips_per_package = ncpus / (cores_per_chip * threads_per_core);
+	
+	if (threads_per_core > 1) { /* HT available - 4 levels */
 
-	/* Init topo info.
-	 * For now we assume that we have a four level topology
-	 */
-	children_no_per_level[0] = chips_per_package;
-	children_no_per_level[1] = cores_per_chip;
-	children_no_per_level[2] = threads_per_core;
-	children_no_per_level[3] = 0;
+		children_no_per_level[0] = chips_per_package;
+		children_no_per_level[1] = cores_per_chip;
+		children_no_per_level[2] = threads_per_core;
+		children_no_per_level[3] = 0;
 
-	level_types[0] = PACKAGE_LEVEL;
-	level_types[1] = CHIP_LEVEL;
-	level_types[2] = CORE_LEVEL;
-	level_types[3] = THREAD_LEVEL;
-
-	build_topology_tree(children_no_per_level,
+		level_types[0] = PACKAGE_LEVEL;
+		level_types[1] = CHIP_LEVEL;
+		level_types[2] = CORE_LEVEL;
+		level_types[3] = THREAD_LEVEL;
+	
+		build_topology_tree(children_no_per_level,
 				level_types,
 				0,
 				root,
 				&last_free_node,
-				&cpuid);
-		
+				&apicid);
+	
+	} else if (cores_per_chip > 1) { /* No HT available - 3 levels */
+
+		children_no_per_level[0] = chips_per_package;
+		children_no_per_level[1] = cores_per_chip;
+		children_no_per_level[2] = 0;
+
+		level_types[0] = PACKAGE_LEVEL;
+		level_types[1] = CHIP_LEVEL;
+		level_types[2] = CORE_LEVEL;
+	
+		build_topology_tree(children_no_per_level,
+				level_types,
+				0,
+				root,
+				&last_free_node,
+				&apicid);
+	} else { /* No HT and no Multi-Core - 2 levels */
+
+		children_no_per_level[0] = chips_per_package;
+		children_no_per_level[1] = 0;
+
+		level_types[0] = PACKAGE_LEVEL;
+		level_types[1] = CHIP_LEVEL;
+	
+		build_topology_tree(children_no_per_level,
+				level_types,
+				0,
+				root,
+				&last_free_node,
+				&apicid);
+	}
 	return root;
 }
 
@@ -285,6 +321,15 @@ get_cpu_node_by_cpumask(cpu_node_t * node,
 	return NULL;
 }
 
+cpu_node_t *
+get_cpu_node_by_cpuid(int cpuid) {
+	cpumask_t mask = CPUMASK(cpuid);
+
+	KASSERT(cpu_root_node != NULL, ("cpu_root_node isn't initialized"));
+
+	return get_cpu_node_by_cpumask(cpu_root_node, mask);
+}
+
 /* Get the mask of siblings for level_type of a cpuid */
 cpumask_t
 get_cpumask_from_level(int cpuid,
@@ -315,6 +360,7 @@ get_cpumask_from_level(int cpuid,
 static void
 init_cpu_topology(void)
 {
+	int i;
 	cpu_root_node = build_cpu_topology();
 
 	sysctl_ctx_init(&cpu_topology_sysctl_ctx); 
@@ -328,7 +374,9 @@ init_cpu_topology(void)
 	SYSCTL_ADD_PROC(&cpu_topology_sysctl_ctx, SYSCTL_CHILDREN(cpu_topology_sysctl_tree),
 			OID_AUTO, "tree", CTLTYPE_STRING | CTLFLAG_RD,
 			NULL, 0, print_cpu_topology_tree_sysctl, "A", "Tree print of CPU topology");
-
+	for (i = 0; i < ncpus; i++) {
+		
+	}
 }
 SYSINIT(cpu_topology, SI_BOOT2_CPU_TOPOLOGY, SI_ORDER_FIRST,
 	init_cpu_topology, NULL)
