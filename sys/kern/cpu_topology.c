@@ -70,6 +70,7 @@
 #include <sys/cpu_topology.h>
 
 #define INDENT_BUF_SIZE LEVEL_NO*3
+#define INVALID_CORE_ID -1
 
 static cpu_node_t cpu_topology_nodes[MAXCPU]; /* Memory for topology */
 static cpu_node_t *cpu_root_node; /* Root node pointer */
@@ -392,8 +393,6 @@ init_pcpu_topology_sysctl(void)
 		sbuf_printf(&sb,"cpu%d", i);
 		sbuf_finish(&sb);
 
-		pcpu_sysctl[i].physical_id = get_chip_ID(i); 
-		pcpu_sysctl[i].core_id = get_core_number_within_chip(i); 
 
 		/* Get physical siblings */
 		mask = get_cpumask_from_level(i, CHIP_LEVEL);
@@ -405,8 +404,14 @@ init_pcpu_topology_sysctl(void)
 		sbuf_trim(&sb);
 		sbuf_finish(&sb);
 
+		pcpu_sysctl[i].physical_id = get_chip_ID(i); 
+
 		/* Get core siblings */
 		mask = get_cpumask_from_level(i, CORE_LEVEL);
+		if (mask == 0) {
+			pcpu_sysctl[i].core_id = INVALID_CORE_ID;
+			continue;
+		}			
 		sbuf_new(&sb, pcpu_sysctl[i].core_siblings,
 			sizeof(pcpu_sysctl[i].core_siblings), SBUF_FIXEDLEN);
 		CPUSET_FOREACH(cpu, mask) {
@@ -414,6 +419,9 @@ init_pcpu_topology_sysctl(void)
 		}
 		sbuf_trim(&sb);
 		sbuf_finish(&sb);
+
+		pcpu_sysctl[i].core_id = get_core_number_within_chip(i); 
+
 	}
 }
 
@@ -477,6 +485,11 @@ build_sysctl_cpu_topology(void)
 			OID_AUTO, "physical_sibings", CTLFLAG_RD,
 			pcpu_sysctl[i].physical_siblings, 0,
 			"Physical siblings");
+
+		/* Check if the core_id found is valid */
+		if (pcpu_sysctl[i].core_id == INVALID_CORE_ID) {
+			continue;
+		}
 
 		/* Add core id info */
 		SYSCTL_ADD_INT(&pcpu_sysctl[i].sysctl_ctx,
