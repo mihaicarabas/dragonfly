@@ -124,6 +124,9 @@ struct usched_bsd4_pcpu {
 	short	rrcount;
 	short	upri;
 	struct lwp *uschedcp;
+#ifdef SMP
+	cpu_node_t * cpunode;
+#endif
 };
 
 typedef struct usched_bsd4_pcpu	*bsd4_pcpu_t;
@@ -1341,6 +1344,28 @@ sched_thread_cpu_init(void)
 
 	if (bootverbose)
 	    kprintf(" %d", i);
+
+	dd->cpunode = get_cpu_node_by_cpuid(i);
+	if (dd->cpunode == NULL) {
+		kprintf ("WARNING: No CPU NODE found for cpu%d\n", i);
+	} else if (bootverbose) {
+		if (dd->cpunode->type == THREAD_LEVEL) {
+			kprintf ("HyperThreading available - cpu%d. Siblings: ", i);
+		} else if (dd->cpunode->type == CORE_LEVEL) {
+			kprintf ("No HT available, multi core available - cpu%d. Siblings: ", i);
+		} else if (dd->cpunode->type == CHIP_LEVEL) {
+			kprintf ("No HT available, single core - cpu%d. Siblings: ", i);
+		}
+		if (dd->cpunode->parent_node != NULL) {
+			CPUSET_FOREACH(i, dd->cpunode->parent_node->members)
+				kprintf("cpu%d ", i);
+			kprintf("\n");
+		} else {
+			kprintf(" no siblings\n");
+		}
+	}
+
+
 
 	lwkt_create(sched_thread, NULL, NULL, &dd->helper_thread, 
 		    TDF_NOSTART, i, "usched %d", i);
