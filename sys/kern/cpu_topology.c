@@ -71,11 +71,26 @@
 
 #define INDENT_BUF_SIZE LEVEL_NO*3
 
-static cpu_node_t cpu_topology_nodes[MAXCPU];
-static cpu_node_t *cpu_root_node;
+static cpu_node_t cpu_topology_nodes[MAXCPU]; /* Memory for topology */
+static cpu_node_t *cpu_root_node; /* Root node pointer */
 
 static struct sysctl_ctx_list cpu_topology_sysctl_ctx;
 static struct sysctl_oid *cpu_topology_sysctl_tree;
+static char cpu_topology_members[8*MAXCPU];
+
+struct per_cpu_sysctl_info {
+	struct sysctl_ctx_list sysctl_ctx;
+	struct sysctl_oid *sysctl_tree;
+	char cpu_name[32];
+	int physical_id;
+	int core_id;
+	char physical_siblings[8*MAXCPU];
+	char core_siblings[8*MAXCPU];
+};
+typedef struct per_cpu_sysctl_info per_cpu_sysctl_info_t;
+
+static per_cpu_sysctl_info_t pcpu_sysctl[MAXCPU];
+
 
 /************************************/
 /* CPU TOPOLOGY BUILDING  FUNCTIONS */
@@ -231,7 +246,11 @@ build_cpu_topology(void)
 
 /* Recursive function helper to print the CPU topology tree */
 static void
-print_cpu_topology_tree_sysctl_helper(cpu_node_t *node, struct sbuf *sb, char * buf, int buf_len, int last)
+print_cpu_topology_tree_sysctl_helper(cpu_node_t *node,
+				struct sbuf *sb,
+				char * buf,
+				int buf_len,
+				int last)
 {
 	int i;
 	int bsr_member;
@@ -259,7 +278,7 @@ print_cpu_topology_tree_sysctl_helper(cpu_node_t *node, struct sbuf *sb, char * 
 			get_core_number_within_chip(bsr_member));
 	} else if (node->type == THREAD_LEVEL) {
 		sbuf_printf(sb,"THREAD ID %d: ",
-		get_logical_CPU_number_within_core(bsr_member));
+			get_logical_CPU_number_within_core(bsr_member));
 	} else {
 		sbuf_printf(sb,"UNKNOWN: ");
 	}
@@ -270,7 +289,8 @@ print_cpu_topology_tree_sysctl_helper(cpu_node_t *node, struct sbuf *sb, char * 
 	sbuf_printf(sb,"\n");
 
 	for (i = 0; i < node->child_no; i++) {
-		print_cpu_topology_tree_sysctl_helper(&(node->child_node[i]), sb, buf, buf_len, i == (node->child_no -1));
+		print_cpu_topology_tree_sysctl_helper(&(node->child_node[i]),
+				sb, buf, buf_len, i == (node->child_no -1));
 	}
 }
 
@@ -356,27 +376,132 @@ get_cpumask_from_level(int cpuid,
 	return 0;
 }
 
-/* Build the CPU Topology and SYSCTL Topology tree */
+/* init pcpu_sysctl structure info */
 static void
-init_cpu_topology(void)
+init_pcpu_topology_sysctl(void)
+{
+	int cpu;
+	int i;
+	cpumask_t mask;
+	struct sbuf sb;
+
+	for (i = 0; i < ncpus; i++) {
+
+		sbuf_new(&sb, pcpu_sysctl[i].cpu_name,
+			sizeof(pcpu_sysctl[i].cpu_name), SBUF_FIXEDLEN);
+		sbuf_printf(&sb,"cpu%d", i);
+		sbuf_finish(&sb);
+
+		pcpu_sysctl[i].physical_id = get_chip_ID(i); 
+		pcpu_sysctl[i].core_id = get_core_number_within_chip(i); 
+
+		/* Get physical siblings */
+		mask = get_cpumask_from_level(i, CHIP_LEVEL);
+		sbuf_new(&sb, pcpu_sysctl[i].physical_siblings,
+			sizeof(pcpu_sysctl[i].physical_siblings), SBUF_FIXEDLEN);
+		CPUSET_FOREACH(cpu, mask) {
+			sbuf_printf(&sb,"cpu%d ", cpu);
+		}
+		sbuf_trim(&sb);
+		sbuf_finish(&sb);
+
+		/* Get core siblings */
+		mask = get_cpumask_from_level(i, CORE_LEVEL);
+		sbuf_new(&sb, pcpu_sysctl[i].core_siblings,
+			sizeof(pcpu_sysctl[i].core_siblings), SBUF_FIXEDLEN);
+		CPUSET_FOREACH(cpu, mask) {
+			sbuf_printf(&sb,"cpu%d ", cpu);
+		}
+		sbuf_trim(&sb);
+		sbuf_finish(&sb);
+	}
+}
+
+/* Build SYSCTL structure for revealing
+ * the CPU Topology to user-space.
+ */
+static void
+build_sysctl_cpu_topology(void)
 {
 	int i;
-	cpu_root_node = build_cpu_topology();
-
+	struct sbuf sb;
+	
+	/* SYSCTL new leaf for "cpu_topology" */
 	sysctl_ctx_init(&cpu_topology_sysctl_ctx); 
-
 	cpu_topology_sysctl_tree = SYSCTL_ADD_NODE(&cpu_topology_sysctl_ctx,
 					SYSCTL_STATIC_CHILDREN(_hw),
 					OID_AUTO,
 					"cpu_topology",
 					CTLFLAG_RD, 0, "");
 
-	SYSCTL_ADD_PROC(&cpu_topology_sysctl_ctx, SYSCTL_CHILDREN(cpu_topology_sysctl_tree),
+	/* SYSCTL cpu_topology "tree" entry */
+	SYSCTL_ADD_PROC(&cpu_topology_sysctl_ctx,
+			SYSCTL_CHILDREN(cpu_topology_sysctl_tree),
 			OID_AUTO, "tree", CTLTYPE_STRING | CTLFLAG_RD,
-			NULL, 0, print_cpu_topology_tree_sysctl, "A", "Tree print of CPU topology");
-	for (i = 0; i < ncpus; i++) {
-		
+			NULL, 0, print_cpu_topology_tree_sysctl, "A",
+			"Tree print of CPU topology");
+
+	/* SYSCTL cpu_topology "members" entry */
+	sbuf_new(&sb, cpu_topology_members,
+		sizeof(cpu_topology_members), SBUF_FIXEDLEN);
+	CPUSET_FOREACH(i, cpu_root_node->members) {
+		sbuf_printf(&sb,"cpu%d ", i);
 	}
+	sbuf_trim(&sb);
+	sbuf_finish(&sb);
+	SYSCTL_ADD_STRING(&cpu_topology_sysctl_ctx,
+			SYSCTL_CHILDREN(cpu_topology_sysctl_tree),
+			OID_AUTO, "members", CTLFLAG_RD,
+			cpu_topology_members, 0,
+			"Members of the CPU Topology");
+
+	/* SYSCTL per_cpu info */	
+	for (i = 0; i < ncpus; i++) {
+		/* New leaf : hw.cpu_topology.cpux */
+		sysctl_ctx_init(&pcpu_sysctl[i].sysctl_ctx); 
+		pcpu_sysctl[i].sysctl_tree = SYSCTL_ADD_NODE(&pcpu_sysctl[i].sysctl_ctx,
+					SYSCTL_CHILDREN(cpu_topology_sysctl_tree),
+					OID_AUTO,
+					pcpu_sysctl[i].cpu_name,
+					CTLFLAG_RD, 0, "");
+		/* Add physical id info */
+		SYSCTL_ADD_INT(&pcpu_sysctl[i].sysctl_ctx,
+			SYSCTL_CHILDREN(pcpu_sysctl[i].sysctl_tree),
+			OID_AUTO, "physical_id", CTLFLAG_RD,
+			&pcpu_sysctl[i].physical_id, 0,
+			"Physical ID");
+
+		/* Add physical siblings */
+		SYSCTL_ADD_STRING(&pcpu_sysctl[i].sysctl_ctx,
+			SYSCTL_CHILDREN(pcpu_sysctl[i].sysctl_tree),
+			OID_AUTO, "physical_sibings", CTLFLAG_RD,
+			pcpu_sysctl[i].physical_siblings, 0,
+			"Physical siblings");
+
+		/* Add core id info */
+		SYSCTL_ADD_INT(&pcpu_sysctl[i].sysctl_ctx,
+			SYSCTL_CHILDREN(pcpu_sysctl[i].sysctl_tree),
+			OID_AUTO, "core_id", CTLFLAG_RD,
+			&pcpu_sysctl[i].core_id, 0,
+			"Core ID");
+		
+		/*Add core siblings */
+		SYSCTL_ADD_STRING(&pcpu_sysctl[i].sysctl_ctx,
+			SYSCTL_CHILDREN(pcpu_sysctl[i].sysctl_tree),
+			OID_AUTO, "core_siblings", CTLFLAG_RD,
+			pcpu_sysctl[i].core_siblings, 0,
+			"Core siblings");
+	}
+}
+
+/* Build the CPU Topology and SYSCTL Topology tree */
+static void
+init_cpu_topology(void)
+{
+	cpu_root_node = build_cpu_topology();
+
+	init_pcpu_topology_sysctl();
+	build_sysctl_cpu_topology();
 }
 SYSINIT(cpu_topology, SI_BOOT2_CPU_TOPOLOGY, SI_ORDER_FIRST,
 	init_cpu_topology, NULL)
