@@ -494,7 +494,7 @@ build_sysctl_cpu_topology(void)
 		/* Add physical siblings */
 		SYSCTL_ADD_STRING(&pcpu_sysctl[i].sysctl_ctx,
 			SYSCTL_CHILDREN(pcpu_sysctl[i].sysctl_tree),
-			OID_AUTO, "physical_sibings", CTLFLAG_RD,
+			OID_AUTO, "physical_siblings", CTLFLAG_RD,
 			pcpu_sysctl[i].physical_siblings, 0,
 			"Physical siblings");
 
