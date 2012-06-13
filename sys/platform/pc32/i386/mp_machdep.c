@@ -1098,9 +1098,10 @@ mp_bsp_simple_setup(void)
 		tsc0_offset = rdtsc();
 }
 
-/************************************/
-/* CPU TOPOLOGY DETECTION FUNCTIONS */
-/************************************/
+
+/*
+ * CPU TOPOLOGY DETECTION FUNCTIONS
+ */
 
 /* Detect intel topology using CPUID 
  * Ref: http://www.intel.com/Assets/PDF/appnote/241618.pdf, pg 41
@@ -1124,7 +1125,8 @@ detect_intel_topology(int count_htt_cores)
 
 	} else {
 		core_bits = 0;
-		for (shift = 0; (1 << shift) < count_htt_cores; ++shift);
+		for (shift = 0; (1 << shift) < count_htt_cores; ++shift)
+			;
 		logical_CPU_bits = 1 << shift;
 		return;
 	}
@@ -1157,13 +1159,16 @@ FUNC_B:
 FUNC_4:
 	cpuid_count(0x4, 0, p);
 	cores_per_package = FUNC_4_MAX_CORE_NO(p[0]) + 1;
+	
 	logical_per_package = count_htt_cores;
 	logical_per_core = logical_per_package / cores_per_package;
 	
-	for (shift = 0; (1 << shift) < logical_per_core; ++shift);
+	for (shift = 0; (1 << shift) < logical_per_core; ++shift)
+		;
 	logical_CPU_bits = shift;
 
-	for (shift = 0; (1 << shift) < cores_per_package; ++shift);
+	for (shift = 0; (1 << shift) < cores_per_package; ++shift)
+		;
 	core_bits = shift;
 
 	return;
@@ -1178,7 +1183,7 @@ detect_amd_topology(int count_htt_cores)
 	int shift = 0;
 
 	if ((cpu_feature & CPUID_HTT)
-			&& (amd_feature2 & AMDID2_CMP)) {
+	    && (amd_feature2 & AMDID2_CMP)) {
 
 		if (cpu_procinfo2 & AMDID_COREID_SIZE) {
 			core_bits = (cpu_procinfo2 & AMDID_COREID_SIZE)
@@ -1190,10 +1195,12 @@ detect_amd_topology(int count_htt_cores)
 		}
 
 		logical_CPU_bits = count_htt_cores >> core_bits;
-		for (shift = 0; (1 << shift) < logical_CPU_bits; ++shift);
+		for (shift = 0; (1 << shift) < logical_CPU_bits; ++shift)
+			;
 		logical_CPU_bits = shift;
 	} else {
-		for (shift = 0; (1 << shift) < count_htt_cores; ++shift);
+		for (shift = 0; (1 << shift) < count_htt_cores; ++shift)
+			;
 		core_bits = shift;
 		logical_CPU_bits = 0;
 	}
@@ -1222,7 +1229,8 @@ detect_cpu_topology(void)
 		logical_CPU_bits = 0;
 		goto OUT;
 	} else {
-		count = (cpu_procinfo & CPUID_HTT_CORES) >> CPUID_HTT_CORE_SHIFT;
+		count = (cpu_procinfo & CPUID_HTT_CORES)
+		    >> CPUID_HTT_CORE_SHIFT;
 	}	
 
 	if (cpu_vendor_id == CPU_VENDOR_INTEL) {
@@ -1242,19 +1250,20 @@ OUT:
 int
 get_chip_ID(int cpuid)
 {
-	return CPUID_TO_APICID(cpuid) &  ~( (1 << (logical_CPU_bits+core_bits) ) -1);
+	return CPUID_TO_APICID(cpuid) &
+	    ~( (1 << (logical_CPU_bits+core_bits) ) -1);
 }
 
 int
 get_core_number_within_chip(int cpuid)
 {
-	return (CPUID_TO_APICID(cpuid) >> logical_CPU_bits)
-		& ( (1 << core_bits) -1);
+	return (CPUID_TO_APICID(cpuid) >> logical_CPU_bits) &
+	    ( (1 << core_bits) -1);
 }
 
 int
 get_logical_CPU_number_within_core(int cpuid)
 {
-	return CPUID_TO_APICID(cpuid)
-		& ( (1 << logical_CPU_bits) -1);
+	return CPUID_TO_APICID(cpuid) &
+	    ( (1 << logical_CPU_bits) -1);
 }
