@@ -1,9 +1,6 @@
 /*
  * Copyright (c) 2012 The DragonFly Project.  All rights reserved.
  * 
- * This code is derived from software contributed to The DragonFly Project
- * by Matthew Dillon <dillon@backplane.com>
- * 
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
  * are met:
@@ -33,52 +30,20 @@
  * 
  */
 
-#include "opt_cpu.h"
-
 #include <sys/param.h>
 #include <sys/systm.h>
 #include <sys/kernel.h>
 #include <sys/sysctl.h>
-#include <sys/malloc.h>
-#include <sys/memrange.h>
-#include <sys/cons.h>	/* cngetc() */
-#include <sys/machintr.h>
-
-#include <sys/mplock2.h>
-
-#include <sys/lock.h>
-#include <sys/user.h>
-#ifdef GPROF 
-#include <sys/gmon.h>
-#endif
-
-#include <machine/smp.h>
-#include <machine_base/apic/apicreg.h>
-#include <machine/atomic.h>
-#include <machine/cpufunc.h>
-#include <machine/cputypes.h>
-#include <machine_base/apic/lapic.h>
-#include <machine_base/apic/ioapic.h>
-#include <machine/psl.h>
-#include <machine/segments.h>
-#include <machine/tss.h>
-#include <machine/specialreg.h>
-#include <machine/globaldata.h>
-#include <machine/pmap_inval.h>
-
 #include <sys/sbuf.h>
 #include <sys/cpu_topology.h>
+
+#include <machine/smp.h>
+#include <machine_base/apic/lapic.h>
 
 #define INDENT_BUF_SIZE LEVEL_NO*3
 #define INVALID_ID -1
 
-static cpu_node_t cpu_topology_nodes[MAXCPU]; /* Memory for topology */
-static cpu_node_t *cpu_root_node; /* Root node pointer */
-
-static struct sysctl_ctx_list cpu_topology_sysctl_ctx;
-static struct sysctl_oid *cpu_topology_sysctl_tree;
-static char cpu_topology_members[8*MAXCPU];
-
+/* Per-cpu sysctl nodes and info */
 struct per_cpu_sysctl_info {
 	struct sysctl_ctx_list sysctl_ctx;
 	struct sysctl_oid *sysctl_tree;
@@ -90,29 +55,30 @@ struct per_cpu_sysctl_info {
 };
 typedef struct per_cpu_sysctl_info per_cpu_sysctl_info_t;
 
+static cpu_node_t cpu_topology_nodes[MAXCPU];	/* Memory for topology */
+static cpu_node_t *cpu_root_node;		/* Root node pointer */
+
+static struct sysctl_ctx_list cpu_topology_sysctl_ctx;
+static struct sysctl_oid *cpu_topology_sysctl_tree;
+static char cpu_topology_members[8*MAXCPU];
 static per_cpu_sysctl_info_t pcpu_sysctl[MAXCPU];
 
 
-/************************************/
-/* CPU TOPOLOGY BUILDING  FUNCTIONS */
-/************************************/
-
-
-/* Generic topology tree.
- * @param children_no_per_level : the number of children on each level
- * @param level_types : the type of the level (THREAD, CORE, CHIP, etc)
- * @param cur_level : the current level of the tree
- * @param node : the current node
- * @param last_free_node : the last free node in the global array.
- * @param cpuid : basicly this are the ids of the leafs
+/* Generic topology tree. The parameters have the following meaning:
+ * - children_no_per_level : the number of children on each level
+ * - level_types : the type of the level (THREAD, CORE, CHIP, etc)
+ * - cur_level : the current level of the tree
+ * - node : the current node
+ * - last_free_node : the last free node in the global array.
+ * - cpuid : basicly this are the ids of the leafs
  */ 
 static void
 build_topology_tree(int *children_no_per_level,
-		uint8_t *level_types,
-		int cur_level,
-		cpu_node_t *node,
-		cpu_node_t **last_free_node,
-		int *apicid)
+   uint8_t *level_types,
+   int cur_level, 
+   cpu_node_t *node,
+   cpu_node_t **last_free_node,
+   int *apicid)
 {
 	int i;
 
@@ -135,18 +101,18 @@ build_topology_tree(int *children_no_per_level,
 		node->child_node[i].parent_node = node;
 
 		build_topology_tree(children_no_per_level,
-				level_types,
-				cur_level + 1,
-				&(node->child_node[i]),
-				last_free_node,
-				apicid);
+		    level_types,
+		    cur_level + 1,
+		    &(node->child_node[i]),
+		    last_free_node,
+		    apicid);
 
 		node->members |= node->child_node[i].members;
 	}
 }
 
 /* Build CPU topology. The detection is made by comparing the
- * chip,core and logical IDs of each CPU with the IDs of the 
+ * chip, core and logical IDs of each CPU with the IDs of the 
  * BSP. When we found a match, at that level the CPUs are siblings.
  */
 static cpu_node_t *
@@ -173,22 +139,19 @@ build_cpu_topology(void)
 
 		cpumask_t mask = CPUMASK(i);
 
-		if ((mask & smp_active_mask) == 0){
+		if ((mask & smp_active_mask) == 0)
 			continue;
-		}
 
-		if (get_chip_ID(BSPID) == get_chip_ID(i)) {
+		if (get_chip_ID(BSPID) == get_chip_ID(i))
 			cores_per_chip++;
-		} else {
+		else
 			continue;
-		}
 
-		if (get_core_number_within_chip(BSPID)
-			== get_core_number_within_chip(i)) {
+		if (get_core_number_within_chip(BSPID) ==
+		    get_core_number_within_chip(i))
 			threads_per_core++;
-		}
-		
 	}
+
 	cores_per_chip /= threads_per_core;
 	chips_per_package = ncpus / (cores_per_chip * threads_per_core);
 	
@@ -205,11 +168,11 @@ build_cpu_topology(void)
 		level_types[3] = THREAD_LEVEL;
 	
 		build_topology_tree(children_no_per_level,
-				level_types,
-				0,
-				root,
-				&last_free_node,
-				&apicid);
+		    level_types,
+		    0,
+		    root,
+		    &last_free_node,
+		    &apicid);
 	
 	} else if (cores_per_chip > 1) { /* No HT available - 3 levels */
 
@@ -222,11 +185,11 @@ build_cpu_topology(void)
 		level_types[2] = CORE_LEVEL;
 	
 		build_topology_tree(children_no_per_level,
-				level_types,
-				0,
-				root,
-				&last_free_node,
-				&apicid);
+		    level_types,
+		    0,
+		    root,
+		    &last_free_node,
+		    &apicid);
 	} else { /* No HT and no Multi-Core - 2 levels */
 
 		children_no_per_level[0] = chips_per_package;
@@ -236,22 +199,23 @@ build_cpu_topology(void)
 		level_types[1] = CHIP_LEVEL;
 	
 		build_topology_tree(children_no_per_level,
-				level_types,
-				0,
-				root,
-				&last_free_node,
-				&apicid);
+		    level_types,
+		    0,
+		    root,
+		    &last_free_node,
+		    &apicid);
 	}
+
 	return root;
 }
 
 /* Recursive function helper to print the CPU topology tree */
 static void
 print_cpu_topology_tree_sysctl_helper(cpu_node_t *node,
-				struct sbuf *sb,
-				char * buf,
-				int buf_len,
-				int last)
+    struct sbuf *sb,
+    char * buf,
+    int buf_len,
+    int last)
 {
 	int i;
 	int bsr_member;
@@ -291,7 +255,7 @@ print_cpu_topology_tree_sysctl_helper(cpu_node_t *node,
 
 	for (i = 0; i < node->child_no; i++) {
 		print_cpu_topology_tree_sysctl_helper(&(node->child_node[i]),
-				sb, buf, buf_len, i == (node->child_no -1));
+		    sb, buf, buf_len, i == (node->child_no -1));
 	}
 }
 
@@ -389,7 +353,7 @@ init_pcpu_topology_sysctl(void)
 	for (i = 0; i < ncpus; i++) {
 
 		sbuf_new(&sb, pcpu_sysctl[i].cpu_name,
-			sizeof(pcpu_sysctl[i].cpu_name), SBUF_FIXEDLEN);
+		    sizeof(pcpu_sysctl[i].cpu_name), SBUF_FIXEDLEN);
 		sbuf_printf(&sb,"cpu%d", i);
 		sbuf_finish(&sb);
 
@@ -419,7 +383,7 @@ init_pcpu_topology_sysctl(void)
 		}
 
 		sbuf_new(&sb, pcpu_sysctl[i].core_siblings,
-			sizeof(pcpu_sysctl[i].core_siblings), SBUF_FIXEDLEN);
+		    sizeof(pcpu_sysctl[i].core_siblings), SBUF_FIXEDLEN);
 		CPUSET_FOREACH(cpu, mask) {
 			sbuf_printf(&sb,"cpu%d ", cpu);
 		}
@@ -529,4 +493,4 @@ init_cpu_topology(void)
 	build_sysctl_cpu_topology();
 }
 SYSINIT(cpu_topology, SI_BOOT2_CPU_TOPOLOGY, SI_ORDER_FIRST,
-	init_cpu_topology, NULL)
+    init_cpu_topology, NULL)
