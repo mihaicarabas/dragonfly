@@ -1252,7 +1252,7 @@ detect_cpu_topology(void)
 	if (topology_detected) {
 		goto OUT;
 	}
-
+	kprintf("DETECT_CPU_TOPOLOGY: cpu_feature & CPUID_HTT: %d ; %d == %d\n",cpu_feature & CPUID_HTT,cpu_vendor_id, CPU_VENDOR_AMD);
 	if ((cpu_feature & CPUID_HTT) == 0) {
 		core_bits = 0;
 		logical_CPU_bits = 0;
