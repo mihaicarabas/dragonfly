@@ -1248,7 +1248,7 @@ detect_cpu_topology(void)
 		goto OUT;
 	}
 
-	if (!(cpu_feature & CPUID_HTT)) {
+	if ((cpu_feature & CPUID_HTT) == 0) {
 		core_bits = 0;
 		logical_CPU_bits = 0;
 		goto OUT;

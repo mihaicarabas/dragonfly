@@ -366,7 +366,7 @@ init_pcpu_topology_sysctl(void)
 		}
 
 		sbuf_new(&sb, pcpu_sysctl[i].physical_siblings,
-			sizeof(pcpu_sysctl[i].physical_siblings), SBUF_FIXEDLEN);
+		    sizeof(pcpu_sysctl[i].physical_siblings), SBUF_FIXEDLEN);
 		CPUSET_FOREACH(cpu, mask) {
 			sbuf_printf(&sb,"cpu%d ", cpu);
 		}
@@ -407,41 +407,41 @@ build_sysctl_cpu_topology(void)
 	/* SYSCTL new leaf for "cpu_topology" */
 	sysctl_ctx_init(&cpu_topology_sysctl_ctx); 
 	cpu_topology_sysctl_tree = SYSCTL_ADD_NODE(&cpu_topology_sysctl_ctx,
-					SYSCTL_STATIC_CHILDREN(_hw),
-					OID_AUTO,
-					"cpu_topology",
-					CTLFLAG_RD, 0, "");
+	    SYSCTL_STATIC_CHILDREN(_hw),
+	    OID_AUTO,
+	    "cpu_topology",
+	    CTLFLAG_RD, 0, "");
 
 	/* SYSCTL cpu_topology "tree" entry */
 	SYSCTL_ADD_PROC(&cpu_topology_sysctl_ctx,
-			SYSCTL_CHILDREN(cpu_topology_sysctl_tree),
-			OID_AUTO, "tree", CTLTYPE_STRING | CTLFLAG_RD,
-			NULL, 0, print_cpu_topology_tree_sysctl, "A",
-			"Tree print of CPU topology");
+	    SYSCTL_CHILDREN(cpu_topology_sysctl_tree),
+	    OID_AUTO, "tree", CTLTYPE_STRING | CTLFLAG_RD,
+	    NULL, 0, print_cpu_topology_tree_sysctl, "A",
+	    "Tree print of CPU topology");
 
 	/* SYSCTL cpu_topology "members" entry */
 	sbuf_new(&sb, cpu_topology_members,
-		sizeof(cpu_topology_members), SBUF_FIXEDLEN);
+	    sizeof(cpu_topology_members), SBUF_FIXEDLEN);
 	CPUSET_FOREACH(i, cpu_root_node->members) {
 		sbuf_printf(&sb,"cpu%d ", i);
 	}
 	sbuf_trim(&sb);
 	sbuf_finish(&sb);
 	SYSCTL_ADD_STRING(&cpu_topology_sysctl_ctx,
-			SYSCTL_CHILDREN(cpu_topology_sysctl_tree),
-			OID_AUTO, "members", CTLFLAG_RD,
-			cpu_topology_members, 0,
-			"Members of the CPU Topology");
+	    SYSCTL_CHILDREN(cpu_topology_sysctl_tree),
+	    OID_AUTO, "members", CTLFLAG_RD,
+	    cpu_topology_members, 0,
+	    "Members of the CPU Topology");
 
 	/* SYSCTL per_cpu info */	
 	for (i = 0; i < ncpus; i++) {
 		/* New leaf : hw.cpu_topology.cpux */
 		sysctl_ctx_init(&pcpu_sysctl[i].sysctl_ctx); 
 		pcpu_sysctl[i].sysctl_tree = SYSCTL_ADD_NODE(&pcpu_sysctl[i].sysctl_ctx,
-					SYSCTL_CHILDREN(cpu_topology_sysctl_tree),
-					OID_AUTO,
-					pcpu_sysctl[i].cpu_name,
-					CTLFLAG_RD, 0, "");
+		    SYSCTL_CHILDREN(cpu_topology_sysctl_tree),
+		    OID_AUTO,
+		    pcpu_sysctl[i].cpu_name,
+		    CTLFLAG_RD, 0, "");
 
 		/* Check if the physical_id found is valid */
 		if (pcpu_sysctl[i].physical_id == INVALID_ID) {
@@ -450,17 +450,17 @@ build_sysctl_cpu_topology(void)
 
 		/* Add physical id info */
 		SYSCTL_ADD_INT(&pcpu_sysctl[i].sysctl_ctx,
-			SYSCTL_CHILDREN(pcpu_sysctl[i].sysctl_tree),
-			OID_AUTO, "physical_id", CTLFLAG_RD,
-			&pcpu_sysctl[i].physical_id, 0,
-			"Physical ID");
+		    SYSCTL_CHILDREN(pcpu_sysctl[i].sysctl_tree),
+		    OID_AUTO, "physical_id", CTLFLAG_RD,
+		    &pcpu_sysctl[i].physical_id, 0,
+		    "Physical ID");
 
 		/* Add physical siblings */
 		SYSCTL_ADD_STRING(&pcpu_sysctl[i].sysctl_ctx,
-			SYSCTL_CHILDREN(pcpu_sysctl[i].sysctl_tree),
-			OID_AUTO, "physical_siblings", CTLFLAG_RD,
-			pcpu_sysctl[i].physical_siblings, 0,
-			"Physical siblings");
+		    SYSCTL_CHILDREN(pcpu_sysctl[i].sysctl_tree),
+		    OID_AUTO, "physical_siblings", CTLFLAG_RD,
+		    pcpu_sysctl[i].physical_siblings, 0,
+		    "Physical siblings");
 
 		/* Check if the core_id found is valid */
 		if (pcpu_sysctl[i].core_id == INVALID_ID) {
@@ -469,17 +469,17 @@ build_sysctl_cpu_topology(void)
 
 		/* Add core id info */
 		SYSCTL_ADD_INT(&pcpu_sysctl[i].sysctl_ctx,
-			SYSCTL_CHILDREN(pcpu_sysctl[i].sysctl_tree),
-			OID_AUTO, "core_id", CTLFLAG_RD,
-			&pcpu_sysctl[i].core_id, 0,
-			"Core ID");
+		    SYSCTL_CHILDREN(pcpu_sysctl[i].sysctl_tree),
+		    OID_AUTO, "core_id", CTLFLAG_RD,
+		    &pcpu_sysctl[i].core_id, 0,
+		    "Core ID");
 		
 		/*Add core siblings */
 		SYSCTL_ADD_STRING(&pcpu_sysctl[i].sysctl_ctx,
-			SYSCTL_CHILDREN(pcpu_sysctl[i].sysctl_tree),
-			OID_AUTO, "core_siblings", CTLFLAG_RD,
-			pcpu_sysctl[i].core_siblings, 0,
-			"Core siblings");
+		    SYSCTL_CHILDREN(pcpu_sysctl[i].sysctl_tree),
+		    OID_AUTO, "core_siblings", CTLFLAG_RD,
+		    pcpu_sysctl[i].core_siblings, 0,
+		    "Core siblings");
 	}
 }
 
