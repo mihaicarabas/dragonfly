@@ -1204,29 +1204,34 @@ static void
 detect_amd_topology(int count_htt_cores)
 {
 	int shift = 0;
-
+	kprintf("DETECT AMD TOPOLOGY: cpu_feature_htt: %d, amd_feature2_cmp: %d\n", cpu_feature & CPUID_HTT, amd_feature2 & AMDID2_CMP);
 	if ((cpu_feature & CPUID_HTT)
 			&& (amd_feature2 & AMDID2_CMP)) {
-
+		kprintf("ENTER if ((cpu_feature & CPUID_HTT)\n");
 		if (cpu_procinfo2 & AMDID_COREID_SIZE) {
 			core_bits = (cpu_procinfo2 & AMDID_COREID_SIZE)
 			    >> AMDID_COREID_SIZE_SHIFT;
+			kprintf("cpu_procinfo2 & AMDID_COREID_SIZE; core_bits: %d\n", core_bits);
+
 		} else {
 			core_bits = (cpu_procinfo2 & AMDID_CMP_CORES) + 1;
 			for (shift = 0; (1 << shift) < core_bits; ++shift)
 				;
 			core_bits = shift;
+			kprintf("ELSE for (cpu_procinfo2 & AMDID_COREID_SIZE); core_bits: %d\n", core_bits);
 		}
 
 		logical_CPU_bits = count_htt_cores >> core_bits;
 		for (shift = 0; (1 << shift) < logical_CPU_bits; ++shift)
 			;
 		logical_CPU_bits = shift;
+		kprintf("logical_cpu_bits: %d; count_htt_cores: %d\n", logical_CPU_bits, count_htt_cores);
 	} else {
 		for (shift = 0; (1 << shift) < count_htt_cores; ++shift)
 			;
 		core_bits = shift;
 		logical_CPU_bits = 0;
+		kprintf("logical_cpu_bits: %d; count_htt_cores: %d; core_bits: %d\n", logical_CPU_bits, count_htt_cores, core_bits);
 	}
 }
 
