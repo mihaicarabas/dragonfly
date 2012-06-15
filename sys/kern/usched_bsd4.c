@@ -35,14 +35,13 @@
 #include <sys/sysctl.h>
 #include <sys/resourcevar.h>
 #include <sys/spinlock.h>
-#include <machine/cpu.h>
-#include <machine/smp.h>
-
+#include <sys/cpu_topology.h>
 #include <sys/thread2.h>
 #include <sys/spinlock2.h>
 #include <sys/mplock2.h>
 
-#include <sys/cpu_topology.h>
+#include <machine/cpu.h>
+#include <machine/smp.h>
 
 /*
  * Priorities.  Note that with 32 run queues per scheduler each queue
@@ -120,12 +119,12 @@ struct usched usched_bsd4 = {
 };
 
 struct usched_bsd4_pcpu {
-	struct thread helper_thread;
-	short	rrcount;
-	short	upri;
-	struct lwp *uschedcp;
+	struct thread	helper_thread;
+	short		rrcount;
+	short		upri;
+	struct lwp	*uschedcp;
 #ifdef SMP
-	cpu_node_t * cpunode;
+	cpu_node_t 	*cpunode;
 #endif
 };
 
@@ -157,6 +156,11 @@ static volatile int bsd4_scancpu;
 #endif
 static struct spinlock bsd4_spin;
 static struct usched_bsd4_pcpu bsd4_pcpu[MAXCPU];
+static struct sysctl_ctx_list usched_bsd4_sysctl_ctx;
+static struct sysctl_oid *usched_bsd4_sysctl_tree;
+
+
+/* Debug info exposed through debug.* sysctl */
 
 SYSCTL_INT(_debug, OID_AUTO, bsd4_runqcount, CTLFLAG_RD, &bsd4_runqcount, 0,
     "Number of run queues");
@@ -168,9 +172,18 @@ static int usched_optimal;
 SYSCTL_INT(_debug, OID_AUTO, usched_optimal, CTLFLAG_RW,
         &usched_optimal, 0, "acquire_curproc() was optimal");
 #endif
-static int usched_debug = -1;
-SYSCTL_INT(_debug, OID_AUTO, scdebug, CTLFLAG_RW, &usched_debug, 0,
+static int usched_bsd4_debug = -1;
+SYSCTL_INT(_debug, OID_AUTO, scdebug, CTLFLAG_RW, &usched_bsd4_debug, 0,
     "Print debug information for this pid");
+
+static int usched_bsd4_minbatch = 0;
+SYSCTL_INT(_debug, OID_AUTO, usched_bsd4_minbatch, CTLFLAG_RD,
+        &usched_bsd4_minbatch, 0, "hit count on minimum batch processes");
+
+static int usched_bsd4_free = 0;
+SYSCTL_INT(_debug, OID_AUTO, usched_bsd4_free, CTLFLAG_RD,
+        &usched_bsd4_free, 0, "hit count on free sibling cpus");
+
 #ifdef SMP
 static int remote_resched_nonaffinity;
 static int remote_resched_affinity;
@@ -183,15 +196,15 @@ SYSCTL_INT(_debug, OID_AUTO, choose_affinity, CTLFLAG_RD,
         &choose_affinity, 0, "chooseproc() was smart");
 #endif
 
+
+/* Tunning usched_bsd4 - configurable through kern.usched_bsd4.* */
+#ifdef SMP
+static int usched_bsd4_ht_enable = 0;
+#endif
 static int usched_bsd4_rrinterval = (ESTCPUFREQ + 9) / 10;
-SYSCTL_INT(_kern, OID_AUTO, usched_bsd4_rrinterval, CTLFLAG_RW,
-        &usched_bsd4_rrinterval, 0, "");
 static int usched_bsd4_decay = 8;
-SYSCTL_INT(_kern, OID_AUTO, usched_bsd4_decay, CTLFLAG_RW,
-        &usched_bsd4_decay, 0, "Extra decay when not running");
 static int usched_bsd4_batch_time = 10;
-SYSCTL_INT(_kern, OID_AUTO, usched_bsd4_batch_time, CTLFLAG_RW,
-        &usched_bsd4_batch_time, 0, "Minimum batch counter value");
+
 
 /*
  * Initialize the run queues at boot time.
@@ -507,6 +520,50 @@ bsd4_setrunqueue(struct lwp *lp)
 	 *	 process.
 	 */
 	++bsd4_scancpu;
+
+	if(usched_bsd4_ht_enable) {
+		cpuid = (bsd4_scancpu & 0xFFFF) % ncpus;
+		mask = ~bsd4_curprocmask & bsd4_rdyprocmask & lp->lwp_cpumask &
+		    smp_active_mask & usched_global_cpumask;
+		int best_cpuid = -1;
+		int min_batch = BATCHMAX;
+
+		while (mask) {
+			tmpmask = ~(CPUMASK(cpuid) - 1);
+			if (mask & tmpmask)
+				cpuid = BSFCPUMASK(mask & tmpmask);
+			else
+				cpuid = BSFCPUMASK(mask);
+			gd = globaldata_find(cpuid);
+			dd = &bsd4_pcpu[cpuid];
+
+			if ((dd->upri & ~PPQMASK) >= (lp->lwp_priority & ~PPQMASK)) {
+				if (dd->cpunode->parent_node->members & ~dd->cpunode->members & mask) {
+					usched_bsd4_free++;
+					goto found;
+				} else {
+					int sibling = BSFCPUMASK(dd->cpunode->parent_node->members & ~dd->cpunode->members);
+					if (bsd4_pcpu[sibling].uschedcp != NULL) {
+						int batch_h = bsd4_pcpu[sibling].uschedcp->lwp_batch;
+						if (min_batch > batch_h) {
+							min_batch = batch_h;
+							best_cpuid = cpuid;
+						}
+					}
+				}
+			}
+			mask &= ~CPUMASK(cpuid);
+		}
+
+		if (best_cpuid != -1) {
+			cpuid = best_cpuid;
+			gd = globaldata_find(cpuid);
+			dd = &bsd4_pcpu[cpuid];
+			usched_bsd4_minbatch++;
+			goto found;
+		}
+	}
+
 	cpuid = (bsd4_scancpu & 0xFFFF) % ncpus;
 	mask = ~bsd4_curprocmask & bsd4_rdyprocmask & lp->lwp_cpumask &
 	       smp_active_mask & usched_global_cpumask;
@@ -735,7 +792,7 @@ bsd4_recalculate_estcpu(struct lwp *lp)
 				lp->lwp_batch = 0;
 		}
 
-		if (usched_debug == lp->lwp_proc->p_pid) {
+		if (usched_bsd4_debug == lp->lwp_proc->p_pid) {
 			kprintf("pid %d lwp %p estcpu %3d %3d bat %d cp %d/%d",
 				lp->lwp_proc->p_pid, lp,
 				estcpu, lp->lwp_estcpu,
@@ -768,7 +825,7 @@ bsd4_recalculate_estcpu(struct lwp *lp)
 			(lp->lwp_estcpu * decay_factor + estcpu) /
 			(decay_factor + 1));
 
-		if (usched_debug == lp->lwp_proc->p_pid)
+		if (usched_bsd4_debug == lp->lwp_proc->p_pid)
 			kprintf(" finalestcpu %d\n", lp->lwp_estcpu);
 		bsd4_resetpriority(lp);
 		lp->lwp_cpbase += ttlticks * gd->gd_schedclock.periodic;
@@ -1330,57 +1387,110 @@ sched_thread(void *dummy)
 static void
 sched_thread_cpu_init(void)
 {
-    int i;
-
-    if (bootverbose)
-	kprintf("start scheduler helpers on cpus:");
-    
-    for (i = 0; i < ncpus; ++i) {
-	bsd4_pcpu_t dd = &bsd4_pcpu[i];
-	cpumask_t mask = CPUMASK(i);
-
-	if ((mask & smp_active_mask) == 0)
-	    continue;
-
+	int i;
+	int cpuid;
+	
 	if (bootverbose)
-	    kprintf(" %d", i);
+		kprintf("Start scheduler helpers on cpus:\n");
+    
+	sysctl_ctx_init(&usched_bsd4_sysctl_ctx); 
+	usched_bsd4_sysctl_tree = SYSCTL_ADD_NODE(&usched_bsd4_sysctl_ctx,
+	    SYSCTL_STATIC_CHILDREN(_kern), OID_AUTO,
+	    "usched_bsd4", CTLFLAG_RD, 0, "");
+	
+	for (i = 0; i < ncpus; ++i) {
+		bsd4_pcpu_t dd = &bsd4_pcpu[i];
+		cpumask_t mask = CPUMASK(i);
 
-	dd->cpunode = get_cpu_node_by_cpuid(i);
-	if (dd->cpunode == NULL) {
-		kprintf ("WARNING: No CPU NODE found for cpu%d\n", i);
-	} else if (bootverbose) {
-		if (dd->cpunode->type == THREAD_LEVEL) {
-			kprintf ("HyperThreading available - cpu%d. Siblings: ", i);
-		} else if (dd->cpunode->type == CORE_LEVEL) {
-			kprintf ("No HT available, multi core available - cpu%d. Siblings: ", i);
-		} else if (dd->cpunode->type == CHIP_LEVEL) {
-			kprintf ("No HT available, single core - cpu%d. Siblings: ", i);
-		}
-		if (dd->cpunode->parent_node != NULL) {
-			CPUSET_FOREACH(i, dd->cpunode->parent_node->members)
-				kprintf("cpu%d ", i);
-			kprintf("\n");
+		if ((mask & smp_active_mask) == 0)
+		    continue;
+
+		dd->cpunode = get_cpu_node_by_cpuid(i);
+
+		if (dd->cpunode == NULL) {
+
+			usched_bsd4_ht_enable = 0;
+			if (bootverbose)
+				kprintf ("\tcpu%d - WARNING: No CPU NODE found for cpu\n", i);
+
 		} else {
-			kprintf(" no siblings\n");
+
+			switch (dd->cpunode->type) {
+				case THREAD_LEVEL:
+					usched_bsd4_ht_enable = 1;
+
+					if (bootverbose)
+						kprintf ("\tcpu%d - HyperThreading available. Core siblings: ", i);
+					break;
+				case CORE_LEVEL:
+					usched_bsd4_ht_enable = 0;
+	
+					if (bootverbose)
+						kprintf ("\tcpu%d - No HT available, multi-core/physical cpu. Physical siblings: ", i);
+					break;
+				case CHIP_LEVEL:
+					usched_bsd4_ht_enable = 0;
+
+					if (bootverbose)
+						kprintf ("\tcpu%d - No HT available, single-core/physical cpu. Package Siblings: ", i);
+					break;
+				default:
+					if (bootverbose)
+						kprintf ("\tcpu%d - Unknown cpunode->type. Siblings: ", i);
+					break;
+			}
+
+			if (bootverbose) {
+				if (dd->cpunode->parent_node != NULL) {
+					CPUSET_FOREACH(cpuid, dd->cpunode->parent_node->members)
+						kprintf("cpu%d ", cpuid);
+					kprintf("\n");
+					} else {
+						kprintf(" no siblings\n");
+					}
+			}
 		}
-	}
 
-
-
-	lwkt_create(sched_thread, NULL, NULL, &dd->helper_thread, 
+		lwkt_create(sched_thread, NULL, NULL, &dd->helper_thread, 
 		    TDF_NOSTART, i, "usched %d", i);
 
-	/*
-	 * Allow user scheduling on the target cpu.  cpu #0 has already
-	 * been enabled in rqinit().
-	 */
-	if (i)
-	    atomic_clear_cpumask(&bsd4_curprocmask, mask);
-	atomic_set_cpumask(&bsd4_rdyprocmask, mask);
-	dd->upri = PRIBASE_NULL;
-    }
-    if (bootverbose)
-	kprintf("\n");
+		/*
+		 * Allow user scheduling on the target cpu.  cpu #0 has already
+		 * been enabled in rqinit().
+		 */
+		if (i)
+		    atomic_clear_cpumask(&bsd4_curprocmask, mask);
+		atomic_set_cpumask(&bsd4_rdyprocmask, mask);
+		dd->upri = PRIBASE_NULL;
+	}
+
+	/* usched_bsd4 sysctl configurable parameters */
+
+	SYSCTL_ADD_INT(&usched_bsd4_sysctl_ctx,
+	    SYSCTL_CHILDREN(usched_bsd4_sysctl_tree),
+	    OID_AUTO, "rrinterval", CTLFLAG_RW,
+	    &usched_bsd4_rrinterval, 0, "");
+	SYSCTL_ADD_INT(&usched_bsd4_sysctl_ctx,
+	    SYSCTL_CHILDREN(usched_bsd4_sysctl_tree),
+	    OID_AUTO, "decay", CTLFLAG_RW,
+	    &usched_bsd4_decay, 0, "Extra decay when not running");
+	SYSCTL_ADD_INT(&usched_bsd4_sysctl_ctx,
+	    SYSCTL_CHILDREN(usched_bsd4_sysctl_tree),
+	    OID_AUTO, "batch_time", CTLFLAG_RW,
+	    &usched_bsd4_batch_time, 0, "Minimum batch counter value");
+
+	/* ht_enable if available, for enable/disable ht awareness */
+	if (usched_bsd4_ht_enable) {
+		SYSCTL_ADD_INT(&usched_bsd4_sysctl_ctx,
+		    SYSCTL_CHILDREN(usched_bsd4_sysctl_tree),
+		    OID_AUTO, "ht_enable", CTLFLAG_RW,
+		    &usched_bsd4_ht_enable, 0, "Enable/Disable HT aware scheduling");
+	} else {
+		SYSCTL_ADD_STRING(&usched_bsd4_sysctl_ctx,
+		    SYSCTL_CHILDREN(usched_bsd4_sysctl_tree),
+		    OID_AUTO, "ht_enable", CTLFLAG_RD,
+		    "NOT SUPPORTED", 0, "HT NO SUPPORTED");
+	}
 }
 SYSINIT(uschedtd, SI_BOOT2_USCHED, SI_ORDER_SECOND,
 	sched_thread_cpu_init, NULL)
