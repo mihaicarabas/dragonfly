@@ -361,20 +361,25 @@ printcpuinfo(void)
 
 			if (cpu_vendor_id == CPU_VENDOR_CENTAUR)
 				print_via_padlock_info();
-/*
- * DEPRECATED - CPU_TOPOLOGY_DETECTION moved to 
- * - sys/platform/pc64/x86_64/mp_machdep.c
- * - sys/kern/subr_cpu_topology
- */
-/*			if ((cpu_feature & CPUID_HTT) &&
+			/*
+			 * INVALID CPU TOPOLOGY INFORMATION PRINT
+			 * DEPRECATED - CPU_TOPOLOGY_DETECTION moved to 
+			 * - sys/platform/pc64/x86_64/mp_machdep.c
+			 * - sys/kern/subr_cpu_topology
+			 */
+
+			/*
+			if ((cpu_feature & CPUID_HTT) &&
 			    cpu_vendor_id == CPU_VENDOR_AMD)
 				cpu_feature &= ~CPUID_HTT;
-*/
+			*/
+
 			/*
 			 * If this CPU supports HTT or CMP then mention the
 			 * number of physical/logical cores it contains.
 			 */
-/*			if (cpu_feature & CPUID_HTT)
+			/*
+			if (cpu_feature & CPUID_HTT)
 				htt = (cpu_procinfo & CPUID_HTT_CORES) >> 16;
 			if (cpu_vendor_id == CPU_VENDOR_AMD &&
 			    (amd_feature2 & AMDID2_CMP))
@@ -385,13 +390,14 @@ printcpuinfo(void)
 				if ((regs[0] & 0x1f) != 0)
 					cmp = ((regs[0] >> 26) & 0x3f) + 1;
 			}
-*/
+			*/
 #ifdef foo
 			/*
 			 * XXX For Intel CPUs, this is max number of cores per
 			 * package, not the actual cores per package.
 			 */
-/*			cpu_cores = cmp;
+			/*
+			cpu_cores = cmp;
 			cpu_logical = htt / cmp;
 
 			if (cpu_cores > 1)
@@ -399,7 +405,8 @@ printcpuinfo(void)
 			if (cpu_logical > 1) {
 				kprintf("\n  Logical CPUs per core: %d",
 				    cpu_logical);
-			}*/
+			}
+			*/
 #endif
 		}
 	}
