@@ -679,8 +679,9 @@ printcpuinfo(void)
 		if (cpu_vendor_id == CPU_VENDOR_CYRIX)
 			kprintf("  DIR=0x%04x", cyrix_did);
 		if (cpu_high > 0) {
+			/*
 			u_int cmp = 1, htt = 1;
-
+			*/
 			/*
 			 * Here we should probably set up flags indicating
 			 * whether or not various features are available.
