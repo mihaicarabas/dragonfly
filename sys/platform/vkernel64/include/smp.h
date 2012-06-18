@@ -183,13 +183,6 @@ int get_logical_CPU_number_within_core(int cpuid);
 
 #define	smp_active_mask	1	/* smp_active_mask always 1 on UP machines */
 
-/* Non-SMP systems - unique core id 0 */
-#define detect_cpu_topology
-#define get_chip_ID(cpuid) 0
-#define get_core_number_within_chip(cpuid) 0
-#define get_logical_CPU_number_within_core(cpuid) 0
-#define get_cpuid_from_apicid(cpuid) 0
-
 #endif
 
 #endif /* _KERNEL */
