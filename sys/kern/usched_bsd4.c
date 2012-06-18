@@ -159,7 +159,6 @@ static struct usched_bsd4_pcpu bsd4_pcpu[MAXCPU];
 static struct sysctl_ctx_list usched_bsd4_sysctl_ctx;
 static struct sysctl_oid *usched_bsd4_sysctl_tree;
 
-
 /* Debug info exposed through debug.* sysctl */
 
 SYSCTL_INT(_debug, OID_AUTO, bsd4_runqcount, CTLFLAG_RD, &bsd4_runqcount, 0,
@@ -1495,5 +1494,32 @@ sched_thread_cpu_init(void)
 SYSINIT(uschedtd, SI_BOOT2_USCHED, SI_ORDER_SECOND,
 	sched_thread_cpu_init, NULL)
 
+#else /* No SMP options - just add the configurable parameters to sysctl */
+
+static void
+sched_sysctl_tree_init(void)
+{
+	sysctl_ctx_init(&usched_bsd4_sysctl_ctx); 
+	usched_bsd4_sysctl_tree = SYSCTL_ADD_NODE(&usched_bsd4_sysctl_ctx,
+	    SYSCTL_STATIC_CHILDREN(_kern), OID_AUTO,
+	    "usched_bsd4", CTLFLAG_RD, 0, "");
+
+	/* usched_bsd4 sysctl configurable parameters */
+	SYSCTL_ADD_INT(&usched_bsd4_sysctl_ctx,
+	    SYSCTL_CHILDREN(usched_bsd4_sysctl_tree),
+	    OID_AUTO, "rrinterval", CTLFLAG_RW,
+	    &usched_bsd4_rrinterval, 0, "");
+	SYSCTL_ADD_INT(&usched_bsd4_sysctl_ctx,
+	    SYSCTL_CHILDREN(usched_bsd4_sysctl_tree),
+	    OID_AUTO, "decay", CTLFLAG_RW,
+	    &usched_bsd4_decay, 0, "Extra decay when not running");
+	SYSCTL_ADD_INT(&usched_bsd4_sysctl_ctx,
+	    SYSCTL_CHILDREN(usched_bsd4_sysctl_tree),
+	    OID_AUTO, "batch_time", CTLFLAG_RW,
+	    &usched_bsd4_batch_time, 0, "Minimum batch counter value");
+
+}
+SYSINIT(uschedtd, SI_BOOT2_USCHED, SI_ORDER_SECOND,
+	sched_sysctl_tree_init, NULL)
 #endif
 
