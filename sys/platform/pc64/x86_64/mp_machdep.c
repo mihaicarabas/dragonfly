@@ -1273,8 +1273,8 @@ OUT:
 int
 get_chip_ID(int cpuid)
 {
-	return get_cpuid_from_apicid(cpuid) &
-	    ~( (1 << (logical_CPU_bits+core_bits) ) -1);
+	return get_cpuid_from_apicid(cpuid) >>
+	    (logical_CPU_bits + core_bits);
 }
 
 int
