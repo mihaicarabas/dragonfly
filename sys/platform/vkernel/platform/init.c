@@ -201,7 +201,7 @@ main(int ac, char **av)
 	if (ac < 2)
 		usage_help(false);
 
-	while ((c = getopt(ac, av, "c:hsvl:m:n:r:e:i:p:I:U")) != -1) {
+	while ((c = getopt(ac, av, "c:hsvl:m:n:r:e:i:p:I:Ub:B:")) != -1) {
 		switch(c) {
 		case 'e':
 			/*
