@@ -1290,10 +1290,15 @@ usage_help(_Bool help)
 {
 	fprintf(stderr, "Usage: %s [-hsUv] [-c file] [-e name=value:name=value:...]\n"
 	    "\t[-i file] [-I interface[:address1[:address2][/netmask]]] [-l cpulock]\n"
-	    "\t[-m size] [-n numcpus] [-p file] [-r file]\n", save_av[0]);
+	    "\t[-m size] [-n numcpus] [-b logical_CPU_bits] [-B core_bits]\n"
+	    "\t[-p file] [-r file]\n", save_av[0]);
 
 	if (help)
 		fprintf(stderr, "\nArguments:\n"
+		    "\t-b\tSpecify the number of bits within APICID(=CPUID) needed for representing\n"
+		    "\t  \tthe logical ID. Controls the number of threads/core (0bits - 1 thread, 1bit - 2 threads).\n"
+		    "\t-B\tSpecify the number of bits within APICID(=CPUID) needed for representing\n"
+		    "\t  \tthe core ID. Controls the number of core/package (0bits - 1 core, 1bit - 2 cores).\n"
 		    "\t-c\tSpecify a readonly CD-ROM image file to be used by the kernel.\n"
 		    "\t-e\tSpecify an environment to be used by the kernel.\n"
 		    "\t-h\tThis list of options.\n"
