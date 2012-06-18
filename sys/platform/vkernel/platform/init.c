@@ -112,6 +112,8 @@ int optcpus;		/* number of cpus - see mp_start() */
 int lwp_cpu_lock;	/* if/how to lock virtual CPUs to real CPUs */
 int real_ncpus;		/* number of real CPUs */
 int next_cpu;		/* next real CPU to lock a virtual CPU to */
+int vkernel_b_arg;	/* -b argument - no of logical CPU bits - only SMP */
+int vkernel_B_arg;	/* -B argument - no of core bits - only SMP */
 
 int via_feature_xcrypt = 0;	/* XXX */
 int via_feature_rng = 0;	/* XXX */
@@ -178,6 +180,8 @@ main(int ac, char **av)
 	kernel_mem_readonly = 1;
 #ifdef SMP
 	optcpus = 2;
+	vkernel_b_arg = 0;
+	vkernel_B_arg = 0;
 #endif
 	lwp_cpu_lock = LCL_NONE;
 
@@ -328,6 +332,23 @@ main(int ac, char **av)
 #endif
 			
 			break;
+		case 'b':
+			/* Set the logical bits within the APICID of a virtual CPU */
+#ifdef SMP
+			vkernel_b_arg = strtol(optarg, NULL, 0);
+#else
+			usage_err("You built a UP vkernel. No CPU topology available");
+#endif
+			break;
+		case 'B':
+			/* Set the core bits withtin the APICID of a virtual CPU */
+#ifdef SMP
+			vkernel_B_arg = strtol(optarg, NULL, 0);
+#else
+			usage_err("You built a UP vkernel. No CPU topology available");
+#endif
+			break;
+
 		case 'p':
 			pid_file = optarg;	
 			break;
