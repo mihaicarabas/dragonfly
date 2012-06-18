@@ -38,7 +38,8 @@
 #include <sys/cpu_topology.h>
 
 #include <machine/smp.h>
-#include <machine_base/apic/lapic.h>
+
+#ifdef SMP
 
 #define INDENT_BUF_SIZE LEVEL_NO*3
 #define INVALID_ID -1
@@ -88,7 +89,7 @@ build_topology_tree(int *children_no_per_level,
 
 	if (node->child_no == 0) {
 		node->child_node = NULL;
-		node->members = CPUMASK(APICID_TO_CPUID(*apicid));
+		node->members = CPUMASK(get_cpuid_from_apicid(*apicid));
 		(*apicid)++;
 		return;
 	}
@@ -494,3 +495,4 @@ init_cpu_topology(void)
 }
 SYSINIT(cpu_topology, SI_BOOT2_CPU_TOPOLOGY, SI_ORDER_FIRST,
     init_cpu_topology, NULL)
+#endif
