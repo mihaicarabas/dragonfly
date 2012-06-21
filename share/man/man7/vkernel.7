@@ -191,25 +191,24 @@ and
 .Cm G
 are allowed.
 .It Fl n Ar numcpus Ns Op Ar :lbits Ns Oo Ar :cbits Oc
-.Cd numcpus
+.Ar numcpus
 specifies the number of CPUs you wish to emulate.
 Up to 16 CPUs are supported.
 The virtual kernel must be built with
 .Cd options SMP
 to use this option and will default to 2 CPUs unless otherwise specified.
-
-.Cd lbits
+.Ar lbits
 specifies the number of bits within APICID(=CPUID) needed for representing
-the logical ID. Controls the number of threads/core (0bits - 1 thread, 1bit
-- 2 threads). This parameter is optional (mandatory only if
-.Cd cbits
+the logical ID.
+Controls the number of threads/core (0bits - 1 thread, 1bit - 2 threads).
+This parameter is optional (mandatory only if
+.Ar cbits
 is specified).
-
-.Cd cbits
+.Ar cbits
 specifies the number of bits within APICID(=CPUID) needed for representing
-the core ID. Controls the number of core/package (0bits - 1 core, 1bit -
-2 cores). This parameter is optional.
-
+the core ID.
+Controls the number of core/package (0bits - 1 core, 1bit - 2 cores).
+This parameter is optional.
 .It Fl p Ar pidfile
 Specify a pidfile in which to store the process ID.
 Scripts can use this file to locate the vkernel pid for the purpose of
