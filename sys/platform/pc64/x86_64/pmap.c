@@ -875,7 +875,6 @@ pmap_bootstrap(vm_paddr_t *firstaddr)
 	cpu_invltlb();
 }
 
-#ifdef SMP
 /*
  * Set 4mb pdir for mp startup
  */
@@ -889,7 +888,6 @@ pmap_set_opt(void)
 		}
 	}
 }
-#endif
 
 /*
  *	Initialize the pmap module.

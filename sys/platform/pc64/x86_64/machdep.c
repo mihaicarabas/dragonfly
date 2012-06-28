@@ -2448,3 +2448,13 @@ init_locks(void)
 	lwkt_token_pool_init();
 }
 
+#ifndef SMP
+static void
+upfixup(void *dummy __unused)
+{
+	if (bootverbose)
+		kprintf("UP fixup\n");
+	pmap_set_opt();
+}
+SYSINIT(upfixup, SI_BOOT2_START_APS, SI_ORDER_ANY, upfixup, NULL)
+#endif
