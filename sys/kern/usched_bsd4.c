@@ -183,6 +183,15 @@ static int usched_bsd4_free = 0;
 SYSCTL_INT(_debug, OID_AUTO, usched_bsd4_free, CTLFLAG_RD,
         &usched_bsd4_free, 0, "hit count on free sibling cpus");
 
+static int usched_bsd4_thread_enter = 0;
+SYSCTL_INT(_debug, OID_AUTO, usched_bsd4_thread_enter, CTLFLAG_RD,
+        &usched_bsd4_thread_enter, 0, "hit count on free sibling cpus");
+
+static int usched_bsd4_thread_mask = 0;
+SYSCTL_INT(_debug, OID_AUTO, usched_bsd4_thread_mask, CTLFLAG_RD,
+        &usched_bsd4_thread_mask, 0, "hit count on free sibling cpus");
+
+
 #ifdef SMP
 static int remote_resched_nonaffinity;
 static int remote_resched_affinity;
@@ -437,6 +446,7 @@ bsd4_setrunqueue(struct lwp *lp)
 {
 	globaldata_t gd;
 	bsd4_pcpu_t dd;
+	struct lwp *nlp;
 #ifdef SMP
 	int cpuid;
 	cpumask_t mask;
@@ -521,6 +531,34 @@ bsd4_setrunqueue(struct lwp *lp)
 	++bsd4_scancpu;
 
 	if(usched_bsd4_ht_enable) {
+
+		if (lp->lwp_proc->p_nthreads > 1) {
+
+			cpumask_t thread_mask = 0;
+
+			FOREACH_LWP_IN_PROC(nlp, lp->lwp_proc) {
+				dd = &bsd4_pcpu[nlp->lwp_thread->td_gd->gd_cpuid];
+				thread_mask |= (dd->cpunode->parent_node->members & ~dd->cpunode->members);
+			}
+			
+			usched_bsd4_thread_mask = thread_mask;
+
+			mask = ~bsd4_curprocmask & bsd4_rdyprocmask & lp->lwp_cpumask &
+			    smp_active_mask & usched_global_cpumask & thread_mask;
+
+			while (mask) {
+				cpuid = BSFCPUMASK(mask);
+				gd = globaldata_find(cpuid);
+				dd = &bsd4_pcpu[cpuid];
+
+				if ((dd->upri & ~PPQMASK) >= (lp->lwp_priority & ~PPQMASK)) {
+					usched_bsd4_thread_enter++;
+					goto found;
+				}
+				mask &= ~CPUMASK(cpuid);
+			}
+		}
+
 		cpuid = (bsd4_scancpu & 0xFFFF) % ncpus;
 		mask = ~bsd4_curprocmask & bsd4_rdyprocmask & lp->lwp_cpumask &
 		    smp_active_mask & usched_global_cpumask;
