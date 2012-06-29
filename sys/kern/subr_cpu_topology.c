@@ -155,7 +155,7 @@ build_cpu_topology(void)
 
 	cores_per_chip /= threads_per_core;
 	chips_per_package = ncpus / (cores_per_chip * threads_per_core);
-	
+	kprintf("NO PER: cores_per_chip: %d; threads_per_core: %d; chips_per_package: %d;\n", cores_per_chip, threads_per_core, chips_per_package);
 	if (threads_per_core > 1) { /* HT available - 4 levels */
 
 		children_no_per_level[0] = chips_per_package;
@@ -488,6 +488,7 @@ build_sysctl_cpu_topology(void)
 static void
 init_cpu_topology(void)
 {
+	print_apic_ids();
 	cpu_root_node = build_cpu_topology();
 
 	init_pcpu_topology_sysctl();

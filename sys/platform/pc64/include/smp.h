@@ -96,6 +96,16 @@ static __inline
 int get_cpuid_from_apicid(int cpuid) {
 	return APICID_TO_CPUID(cpuid);
 }
+#include <sys/systm.h>
+static __inline
+void print_apic_ids(void) {
+	int i;
+	kprintf ("APIC IDs: ");
+	for (i = 0; i < ncpus; i++) {
+		kprintf ("%d ",CPUID_TO_APICID(i));
+	}
+	kprintf("\n");
+}
 
 #endif /* !LOCORE */
 #else	/* !SMP */

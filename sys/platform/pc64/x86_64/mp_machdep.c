@@ -1197,7 +1197,7 @@ FUNC_4:
 	return;
 }
 
-/* Detect AMD topology using CPUID 
+/* Detect AMD topology using CPUID
  * Ref: http://support.amd.com/us/Embedded_TechDocs/25481.pdf, last page
  */
 static void
@@ -1263,6 +1263,7 @@ detect_cpu_topology(void)
 	}
 
 OUT:
+	kprintf("BITS within APICID: logical_CPU_bits: %d; core_bits: %d\n", logical_CPU_bits, core_bits);
 	topology_detected = 1;
 }
 

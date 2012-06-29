@@ -446,7 +446,6 @@ bsd4_setrunqueue(struct lwp *lp)
 {
 	globaldata_t gd;
 	bsd4_pcpu_t dd;
-	struct lwp *nlp;
 #ifdef SMP
 	int cpuid;
 	cpumask_t mask;
@@ -536,6 +535,7 @@ bsd4_setrunqueue(struct lwp *lp)
 
 			cpumask_t thread_mask = 0;
 
+			struct lwp *nlp;
 			FOREACH_LWP_IN_PROC(nlp, lp->lwp_proc) {
 				dd = &bsd4_pcpu[nlp->lwp_thread->td_gd->gd_cpuid];
 				thread_mask |= (dd->cpunode->parent_node->members & ~dd->cpunode->members);
