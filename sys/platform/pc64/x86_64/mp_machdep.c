@@ -1274,20 +1274,20 @@ OUT:
 int
 get_chip_ID(int cpuid)
 {
-	return get_cpuid_from_apicid(cpuid) >>
+	return get_apicid_from_cpuid(cpuid) >>
 	    (logical_CPU_bits + core_bits);
 }
 
 int
 get_core_number_within_chip(int cpuid)
 {
-	return (get_cpuid_from_apicid(cpuid) >> logical_CPU_bits) &
+	return (get_apicid_from_cpuid(cpuid) >> logical_CPU_bits) &
 	    ( (1 << core_bits) -1);
 }
 
 int
 get_logical_CPU_number_within_core(int cpuid)
 {
-	return get_cpuid_from_apicid(cpuid) &
+	return get_apicid_from_cpuid(cpuid) &
 	    ( (1 << logical_CPU_bits) -1);
 }
