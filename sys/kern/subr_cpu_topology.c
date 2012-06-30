@@ -41,6 +41,10 @@
 
 #ifdef SMP
 
+#ifndef NAPICID
+#define NAPICID 256
+#endif
+
 #define INDENT_BUF_SIZE LEVEL_NO*3
 #define INVALID_ID -1
 
@@ -115,7 +119,7 @@ build_topology_tree(int *children_no_per_level,
 	node->child_node = *last_free_node;
 	(*last_free_node) += node->child_no;
 	
-	for (i = 0; i< node->child_no; i++) {
+	for (i = 0; i < node->child_no; i++) {
 
 		node->child_node[i].parent_node = node;
 
@@ -173,7 +177,11 @@ build_cpu_topology(void)
 
 	cores_per_chip /= threads_per_core;
 	chips_per_package = ncpus / (cores_per_chip * threads_per_core);
-	kprintf("NO PER: cores_per_chip: %d; threads_per_core: %d; chips_per_package: %d;\n", cores_per_chip, threads_per_core, chips_per_package);
+	
+	if (bootverbose)
+		kprintf("CPU Topology: cores_per_chip: %d; threads_per_core: %d; chips_per_package: %d;\n",
+		    cores_per_chip, threads_per_core, chips_per_package);
+
 	if (threads_per_core > 1) { /* HT available - 4 levels */
 
 		children_no_per_level[0] = chips_per_package;
@@ -506,7 +514,6 @@ build_sysctl_cpu_topology(void)
 static void
 init_cpu_topology(void)
 {
-	print_apic_ids();
 	cpu_root_node = build_cpu_topology();
 
 	init_pcpu_topology_sysctl();

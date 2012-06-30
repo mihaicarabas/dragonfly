@@ -84,6 +84,10 @@ int get_logical_CPU_number_within_core(int cpuid);
 
 #include <machine_base/apic/lapic.h>
 static __inline
+int get_apicid_from_cpuid(int cpuid) {
+	return CPUID_TO_APICID(cpuid);
+}
+static __inline
 int get_cpuid_from_apicid(int cpuid) {
 	return APICID_TO_CPUID(cpuid);
 }
