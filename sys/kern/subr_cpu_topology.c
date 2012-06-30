@@ -64,6 +64,24 @@ static struct sysctl_oid *cpu_topology_sysctl_tree;
 static char cpu_topology_members[8*MAXCPU];
 static per_cpu_sysctl_info_t pcpu_sysctl[MAXCPU];
 
+/* Get the next valid apicid starting
+ * from current apicid (curr_apicid
+ */
+static int
+get_next_valid_apicid(int curr_apicid)
+{
+	int next_apicid = curr_apicid;
+	do {
+		next_apicid++;
+	}
+	while(get_cpuid_from_apicid(next_apicid) == -1 &&
+	   next_apicid < NAPICID);
+	if (next_apicid == NAPICID) {
+		kprintf("Warning: No next valid APICID found. Returning -1\n");
+		return -1;
+	}
+	return next_apicid;
+}
 
 /* Generic topology tree. The parameters have the following meaning:
  * - children_no_per_level : the number of children on each level
@@ -89,8 +107,8 @@ build_topology_tree(int *children_no_per_level,
 
 	if (node->child_no == 0) {
 		node->child_node = NULL;
+		*apicid = get_next_valid_apicid(*apicid);
 		node->members = CPUMASK(get_cpuid_from_apicid(*apicid));
-		(*apicid)++;
 		return;
 	}
 
@@ -127,7 +145,7 @@ build_cpu_topology(void)
 	int chips_per_package = 0;
 	int children_no_per_level[LEVEL_NO];
 	uint8_t level_types[LEVEL_NO];
-	int apicid = 0;
+	int apicid = -1;
 
 	cpu_node_t *root = &cpu_topology_nodes[0];
 	cpu_node_t *last_free_node = root + 1;

@@ -102,14 +102,20 @@ int get_cpuid_from_apicid(int apicid) {
 }
 
 #include <sys/systm.h>
+#define NAPICID 256
 static __inline
 void print_apic_ids(void) {
 	int i;
 	kprintf ("APIC IDs: ");
-	for (i = 0; i < ncpus; i++) {
+	for (i = 0; i < NAPICID; i++) {
 		kprintf ("%d ",CPUID_TO_APICID(i));
 	}
+	kprintf("\nCPUIDs:");
+	for (i = 0; i < NAPICID; i++) {
+		kprintf ("%d ",APICID_TO_CPUID(i));
+	}
 	kprintf("\n");
+
 }
 
 #endif /* !LOCORE */
