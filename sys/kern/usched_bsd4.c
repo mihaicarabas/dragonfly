@@ -183,9 +183,9 @@ static int usched_bsd4_free = 0;
 SYSCTL_INT(_debug, OID_AUTO, usched_bsd4_free, CTLFLAG_RD,
         &usched_bsd4_free, 0, "hit count on free sibling cpus");
 
-static int usched_bsd4_thread_enter = 0;
-SYSCTL_INT(_debug, OID_AUTO, usched_bsd4_thread_enter, CTLFLAG_RD,
-        &usched_bsd4_thread_enter, 0, "hit count on free sibling cpus");
+static int usched_bsd4_smt_enter = 0;
+SYSCTL_INT(_debug, OID_AUTO, usched_bsd4_smt_enter, CTLFLAG_RD,
+        &usched_bsd4_smt_enter, 0, "hit count on free sibling cpus");
 
 static int usched_bsd4_thread_mask = 0;
 SYSCTL_INT(_debug, OID_AUTO, usched_bsd4_thread_mask, CTLFLAG_RD,
@@ -208,6 +208,7 @@ SYSCTL_INT(_debug, OID_AUTO, choose_affinity, CTLFLAG_RD,
 /* Tunning usched_bsd4 - configurable through kern.usched_bsd4.* */
 #ifdef SMP
 static int usched_bsd4_ht_enable = 0;
+static int usched_bsd4_smt_enable = 0;
 #endif
 static int usched_bsd4_rrinterval = (ESTCPUFREQ + 9) / 10;
 static int usched_bsd4_decay = 8;
@@ -450,6 +451,7 @@ bsd4_setrunqueue(struct lwp *lp)
 	int cpuid;
 	cpumask_t mask;
 	cpumask_t tmpmask;
+	cpu_node_t *cpunode;
 #endif
 
 	/*
@@ -527,11 +529,46 @@ bsd4_setrunqueue(struct lwp *lp)
 	 *	 cpus with designated lps with a worse priority than our
 	 *	 process.
 	 */
-	++bsd4_scancpu;
+	if(usched_bsd4_smt_enable) {
+		cpunode = bsd4_pcpu[lp->lwp_thread->td_gd->gd_cpuid].cpunode;
+		while(cpunode != NULL) {
+			mask = ~bsd4_curprocmask & bsd4_rdyprocmask & lp->lwp_cpumask &
+			    smp_active_mask & usched_global_cpumask & cpunode->members;
 
-	if(usched_bsd4_ht_enable) {
+			while (mask) {
+				cpuid = BSFCPUMASK(mask);
+				gd = globaldata_find(cpuid);
+				dd = &bsd4_pcpu[cpuid];
 
-		if (lp->lwp_proc->p_nthreads > 1) {
+				if ((dd->upri & ~PPQMASK) >= (lp->lwp_priority & ~PPQMASK)) {
+					usched_bsd4_smt_enter++;
+					goto found;
+				}
+				mask &= ~CPUMASK(cpuid);
+			}
+
+			mask = bsd4_curprocmask & bsd4_rdyprocmask & lp->lwp_cpumask &
+			    smp_active_mask & usched_global_cpumask & cpunode->members;
+
+			while (mask) {
+				cpuid = BSFCPUMASK(mask);
+				gd = globaldata_find(cpuid);
+				dd = &bsd4_pcpu[cpuid];
+
+				if ((dd->upri & ~PPQMASK) > (lp->lwp_priority & ~PPQMASK)) {
+					usched_bsd4_smt_enter++;
+					goto found;
+				}
+				mask &= ~CPUMASK(cpuid);
+			}
+			cpunode = cpunode->parent_node;
+		}
+	}
+
+
+//	if(usched_bsd4_ht_enable) {
+
+/*		if (lp->lwp_proc->p_nthreads > 1) {
 
 			cpumask_t thread_mask = 0;
 
@@ -552,13 +589,14 @@ bsd4_setrunqueue(struct lwp *lp)
 				dd = &bsd4_pcpu[cpuid];
 
 				if ((dd->upri & ~PPQMASK) >= (lp->lwp_priority & ~PPQMASK)) {
-					usched_bsd4_thread_enter++;
+					usched_bsd4_smt_enter++;
 					goto found;
 				}
 				mask &= ~CPUMASK(cpuid);
 			}
 		}
-
+*/
+/*
 		cpuid = (bsd4_scancpu & 0xFFFF) % ncpus;
 		mask = ~bsd4_curprocmask & bsd4_rdyprocmask & lp->lwp_cpumask &
 		    smp_active_mask & usched_global_cpumask;
@@ -598,9 +636,10 @@ bsd4_setrunqueue(struct lwp *lp)
 			dd = &bsd4_pcpu[cpuid];
 			usched_bsd4_minbatch++;
 			goto found;
-		}
-	}
-
+		}*/
+//	}
+	else {
+	++bsd4_scancpu;
 	cpuid = (bsd4_scancpu & 0xFFFF) % ncpus;
 	mask = ~bsd4_curprocmask & bsd4_rdyprocmask & lp->lwp_cpumask &
 	       smp_active_mask & usched_global_cpumask;
@@ -638,7 +677,7 @@ bsd4_setrunqueue(struct lwp *lp)
 			goto found;
 		mask &= ~CPUMASK(cpuid);
 	}
-
+	}
 	/*
 	 * If we cannot find a suitable cpu we reload from bsd4_scancpu
 	 * and round-robin.  Other cpus will pickup as they release their
@@ -1426,7 +1465,8 @@ sched_thread_cpu_init(void)
 {
 	int i;
 	int cpuid;
-	
+	int ht_not_supported = 0;
+	int smt_not_supported = 0;
 	if (bootverbose)
 		kprintf("Start scheduler helpers on cpus:\n");
     
@@ -1445,8 +1485,8 @@ sched_thread_cpu_init(void)
 		dd->cpunode = get_cpu_node_by_cpuid(i);
 
 		if (dd->cpunode == NULL) {
-
-			usched_bsd4_ht_enable = 0;
+			ht_not_supported = 1;
+			smt_not_supported = 1;
 			if (bootverbose)
 				kprintf ("\tcpu%d - WARNING: No CPU NODE found for cpu\n", i);
 
@@ -1454,19 +1494,17 @@ sched_thread_cpu_init(void)
 
 			switch (dd->cpunode->type) {
 				case THREAD_LEVEL:
-					usched_bsd4_ht_enable = 1;
-
 					if (bootverbose)
 						kprintf ("\tcpu%d - HyperThreading available. Core siblings: ", i);
 					break;
 				case CORE_LEVEL:
-					usched_bsd4_ht_enable = 0;
-	
+					ht_not_supported = 1;
+
 					if (bootverbose)
 						kprintf ("\tcpu%d - No HT available, multi-core/physical cpu. Physical siblings: ", i);
 					break;
 				case CHIP_LEVEL:
-					usched_bsd4_ht_enable = 0;
+					ht_not_supported = 1;
 
 					if (bootverbose)
 						kprintf ("\tcpu%d - No HT available, single-core/physical cpu. Package Siblings: ", i);
@@ -1517,17 +1555,36 @@ sched_thread_cpu_init(void)
 	    &usched_bsd4_batch_time, 0, "Minimum batch counter value");
 
 	/* ht_enable if available, for enable/disable ht awareness */
-	if (usched_bsd4_ht_enable) {
-		SYSCTL_ADD_INT(&usched_bsd4_sysctl_ctx,
-		    SYSCTL_CHILDREN(usched_bsd4_sysctl_tree),
-		    OID_AUTO, "ht_enable", CTLFLAG_RW,
-		    &usched_bsd4_ht_enable, 0, "Enable/Disable HT aware scheduling");
-	} else {
+	if (ht_not_supported) {
+		usched_bsd4_ht_enable = 0;
 		SYSCTL_ADD_STRING(&usched_bsd4_sysctl_ctx,
 		    SYSCTL_CHILDREN(usched_bsd4_sysctl_tree),
 		    OID_AUTO, "ht_enable", CTLFLAG_RD,
 		    "NOT SUPPORTED", 0, "HT NO SUPPORTED");
+	} else {
+		usched_bsd4_ht_enable = 1;
+		SYSCTL_ADD_INT(&usched_bsd4_sysctl_ctx,
+		    SYSCTL_CHILDREN(usched_bsd4_sysctl_tree),
+		    OID_AUTO, "ht_enable", CTLFLAG_RW,
+		    &usched_bsd4_ht_enable, 0, "Enable/Disable HT aware scheduling");
+
 	}
+
+	if (smt_not_supported) {
+		usched_bsd4_ht_enable = 0;
+		SYSCTL_ADD_STRING(&usched_bsd4_sysctl_ctx,
+		    SYSCTL_CHILDREN(usched_bsd4_sysctl_tree),
+		    OID_AUTO, "smt_enable", CTLFLAG_RD,
+		    "NOT SUPPORTED", 0, "SMT NO SUPPORTED");
+	} else {
+		usched_bsd4_smt_enable = 1;
+		SYSCTL_ADD_INT(&usched_bsd4_sysctl_ctx,
+		    SYSCTL_CHILDREN(usched_bsd4_sysctl_tree),
+		    OID_AUTO, "smt_enable", CTLFLAG_RW,
+		    &usched_bsd4_smt_enable, 0, "Enable/Disable HT aware scheduling");
+
+	}
+
 }
 SYSINIT(uschedtd, SI_BOOT2_USCHED, SI_ORDER_SECOND,
 	sched_thread_cpu_init, NULL)
