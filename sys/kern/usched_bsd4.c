@@ -542,6 +542,7 @@ bsd4_setrunqueue(struct lwp *lp)
 
 				if ((dd->upri & ~PPQMASK) >= (lp->lwp_priority & ~PPQMASK)) {
 					usched_bsd4_smt_enter++;
+					//kprintf("usched_bsd4_smt_enter %d: %d %d: old - %d vs. new - %d\n", usched_bsd4_smt_enter, lp->lwp_tid, lp->lwp_proc->p_pid, lp->lwp_thread->td_gd->gd_cpuid, cpuid);
 					goto found;
 				}
 				mask &= ~CPUMASK(cpuid);
@@ -557,12 +558,21 @@ bsd4_setrunqueue(struct lwp *lp)
 
 				if ((dd->upri & ~PPQMASK) > (lp->lwp_priority & ~PPQMASK)) {
 					usched_bsd4_smt_enter++;
+					//kprintf("usched_bsd4_smt_enter2 %d: %d %d: old - %d vs. new - %d\n", usched_bsd4_smt_enter, lp->lwp_tid, lp->lwp_proc->p_pid, lp->lwp_thread->td_gd->gd_cpuid, cpuid);
+
 					goto found;
 				}
 				mask &= ~CPUMASK(cpuid);
 			}
 			cpunode = cpunode->parent_node;
 		}
+
+		cpuid = lp->lwp_thread->td_gd->gd_cpuid;
+		gd = globaldata_find(cpuid);
+		dd= &bsd4_pcpu[cpuid];
+		//kprintf("usched_bsd4_smt_notfound: %d %d: old - %d vs. new - %d\n", lp->lwp_tid, lp->lwp_proc->p_pid, lp->lwp_thread->td_gd->gd_cpuid, cpuid);
+
+
 	}
 
 
@@ -677,7 +687,7 @@ bsd4_setrunqueue(struct lwp *lp)
 			goto found;
 		mask &= ~CPUMASK(cpuid);
 	}
-	}
+	
 	/*
 	 * If we cannot find a suitable cpu we reload from bsd4_scancpu
 	 * and round-robin.  Other cpus will pickup as they release their
@@ -695,6 +705,8 @@ bsd4_setrunqueue(struct lwp *lp)
 	}
 	gd = globaldata_find(cpuid);
 	dd = &bsd4_pcpu[cpuid];
+	//kprintf("usched_bsd4_no_freecpu: %d %d: old - %d vs. new - %d\n", lp->lwp_tid, lp->lwp_proc->p_pid, lp->lwp_thread->td_gd->gd_cpuid, cpuid);
+	}
 found:
 	if (gd == mycpu) {
 		spin_unlock(&bsd4_spin);
