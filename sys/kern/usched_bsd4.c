@@ -40,6 +40,8 @@
 #include <sys/spinlock2.h>
 #include <sys/mplock2.h>
 
+#include <sys/ktr.h>
+
 #include <machine/cpu.h>
 #include <machine/smp.h>
 
@@ -96,8 +98,11 @@ static void bsd4_yield(struct lwp *lp);
 
 #ifdef SMP
 static void need_user_resched_remote(void *dummy);
+static int batchy_looser_pri_test(struct lwp* lp);
+//static int looser_pri_test(int cpuid, cpumask_t from_mask);
 #endif
 static struct lwp *chooseproc_locked(struct lwp *chklp);
+static struct lwp *chooseproc_locked2(struct lwp *chklp);
 static void bsd4_remrunqueue_locked(struct lwp *lp);
 static void bsd4_setrunqueue_locked(struct lwp *lp);
 
@@ -123,6 +128,9 @@ struct usched_bsd4_pcpu {
 	short		rrcount;
 	short		upri;
 	struct lwp	*uschedcp;
+	struct lwp	*old_lp;
+	short		batch_test_pass;
+	int num_of_procs;
 #ifdef SMP
 	cpu_node_t 	*cpunode;
 #endif
@@ -191,6 +199,9 @@ static int usched_bsd4_thread_mask = 0;
 SYSCTL_INT(_debug, OID_AUTO, usched_bsd4_thread_mask, CTLFLAG_RD,
         &usched_bsd4_thread_mask, 0, "hit count on free sibling cpus");
 
+static int usched_bsd4_pid_debug = -1;
+SYSCTL_INT(_debug, OID_AUTO, pid_debug, CTLFLAG_RW, &usched_bsd4_pid_debug, 0,
+    "Print debug information for this pid");
 
 #ifdef SMP
 static int remote_resched_nonaffinity;
@@ -210,6 +221,7 @@ SYSCTL_INT(_debug, OID_AUTO, choose_affinity, CTLFLAG_RD,
 static int usched_bsd4_ht_enable = 0;
 static int usched_bsd4_smt_enable = 0;
 #endif
+static int usched_bsd4_upri_affinity = 1;
 static int usched_bsd4_rrinterval = (ESTCPUFREQ + 9) / 10;
 static int usched_bsd4_decay = 8;
 static int usched_bsd4_batch_time = 10;
@@ -272,9 +284,16 @@ bsd4_acquire_curproc(struct lwp *lp)
 	 * If a reschedule was requested give another thread the
 	 * driver's seat.
 	 */
+	/*if (usched_bsd4_pid_debug == lp->lwp_proc->p_pid) {
+		kprintf ("bsd4_acquire_curproc before user_resched_wanted : %d; cpuid: %d\n", lp->lwp_proc->p_pid, lp->lwp_thread->td_gd->gd_cpuid);
+	}*/
 	if (user_resched_wanted()) {
 		clear_user_resched();
 		bsd4_release_curproc(lp);
+		/*if (usched_bsd4_pid_debug == lp->lwp_proc->p_pid) {
+			kprintf ("bsd4_acquire_curproc in user_resched_wanted after release_curproc : %d; cpuid: %d\n", lp->lwp_proc->p_pid, lp->lwp_thread->td_gd->gd_cpuid);
+		}*/
+
 	}
 
 	/*
@@ -282,6 +301,10 @@ bsd4_acquire_curproc(struct lwp *lp)
 	 */
 	gd = mycpu;
 	dd = &bsd4_pcpu[gd->gd_cpuid];
+
+	/*if (usched_bsd4_pid_debug == lp->lwp_proc->p_pid) {
+		kprintf ("bsd4_acquire_curproc before loop do: %d; cpuid: %d; actual cpuid: %d\n", lp->lwp_proc->p_pid, lp->lwp_thread->td_gd->gd_cpuid, gd->gd_cpuid);
+	}*/
 
 	do {
 		/*
@@ -330,8 +353,20 @@ bsd4_acquire_curproc(struct lwp *lp)
 			 * chance.
 			 */
 			lwkt_deschedule(lp->lwp_thread);
+		/*if (usched_bsd4_pid_debug == lp->lwp_proc->p_pid) {
+		kprintf ("bsd4_acquire_curproc before bsd4_setrunqueue: %d; cpuid: %d; uschedcp: %d; cpu: %d\n", lp->lwp_proc->p_pid, lp->lwp_thread->td_gd->gd_cpuid, dd->uschedcp->lwp_proc->p_pid, dd->uschedcp->lwp_thread->td_gd->gd_cpuid);
+	}*/
+
 			bsd4_setrunqueue(lp);
+	/*if (usched_bsd4_pid_debug == lp->lwp_proc->p_pid) {
+		kprintf ("bsd4_acquire_curproc after bsd4_setrunqueue: %d; cpuid: %d\n", lp->lwp_proc->p_pid, lp->lwp_thread->td_gd->gd_cpuid);
+	}*/
+
 			lwkt_switch();
+	/*if (usched_bsd4_pid_debug == lp->lwp_proc->p_pid) {
+		kprintf ("bsd4_acquire_curproc after lwkt_switch: %d; cpuid: %d; new cpuid: %d\n", lp->lwp_proc->p_pid, lp->lwp_thread->td_gd->gd_cpuid, mycpu->gd_cpuid);
+	}*/
+
 			/*
 			 * Reload after a switch or setrunqueue/switch possibly
 			 * moved us to another cpu.
@@ -365,6 +400,7 @@ bsd4_acquire_curproc(struct lwp *lp)
  *
  * MPSAFE
  */
+
 static void
 bsd4_release_curproc(struct lwp *lp)
 {
@@ -377,6 +413,10 @@ bsd4_release_curproc(struct lwp *lp)
 		dd->uschedcp = NULL;	/* don't let lp be selected */
 		dd->upri = PRIBASE_NULL;
 		atomic_clear_cpumask(&bsd4_curprocmask, gd->gd_cpumask);
+		/*if (usched_bsd4_pid_debug == lp->lwp_proc->p_pid) {
+			kprintf ("bsd4_release_curproc before select : %d; cpuid: %d;\n", lp->lwp_proc->p_pid, lp->lwp_thread->td_gd->gd_cpuid);
+		}*/
+		dd->old_lp = lp;
 		bsd4_select_curproc(gd);
 		crit_exit();
 	}
@@ -408,7 +448,13 @@ bsd4_select_curproc(globaldata_t gd)
 	crit_enter_gd(gd);
 
 	spin_lock(&bsd4_spin);
-	if ((nlp = chooseproc_locked(dd->uschedcp)) != NULL) {
+	if(usched_bsd4_smt_enable) {
+	if ((nlp = chooseproc_locked2(dd->uschedcp)) != NULL) {
+
+		/*if (usched_bsd4_pid_debug == nlp->lwp_proc->p_pid) {
+			kprintf ("bsd4_select_curproc : %d; cpuid: %d; old_lp: pid:%d; cpuid:%d; no_of_procs: %d\n", nlp->lwp_proc->p_pid, nlp->lwp_thread->td_gd->gd_cpuid, dd->old_lp->lwp_proc->p_pid, dd->old_lp->lwp_thread->td_gd->gd_cpuid, dd->num_of_procs);
+		}*/
+
 		atomic_set_cpumask(&bsd4_curprocmask, CPUMASK(cpuid));
 		dd->upri = nlp->lwp_priority;
 		dd->uschedcp = nlp;
@@ -419,6 +465,26 @@ bsd4_select_curproc(globaldata_t gd)
 		lwkt_schedule(nlp->lwp_thread);
 	} else {
 		spin_unlock(&bsd4_spin);
+	}
+	} else {
+	if ((nlp = chooseproc_locked(dd->uschedcp)) != NULL) {
+
+		/*if (usched_bsd4_pid_debug == nlp->lwp_proc->p_pid) {
+			kprintf ("bsd4_select_curproc : %d; cpuid: %d; old_lp: pid:%d; cpuid:%d\n", nlp->lwp_proc->p_pid, nlp->lwp_thread->td_gd->gd_cpuid, dd->old_lp->lwp_proc->p_pid, dd->old_lp->lwp_thread->td_gd->gd_cpuid);
+		}*/
+
+		atomic_set_cpumask(&bsd4_curprocmask, CPUMASK(cpuid));
+		dd->upri = nlp->lwp_priority;
+		dd->uschedcp = nlp;
+		spin_unlock(&bsd4_spin);
+#ifdef SMP
+		lwkt_acquire(nlp->lwp_thread);
+#endif
+		lwkt_schedule(nlp->lwp_thread);
+	} else {
+		spin_unlock(&bsd4_spin);
+	}
+
 	}
 #if 0
 	} else if (bsd4_runqcount && (bsd4_rdyprocmask & CPUMASK(cpuid))) {
@@ -431,8 +497,57 @@ bsd4_select_curproc(globaldata_t gd)
 #endif
 	crit_exit_gd(gd);
 }
+#ifdef SMP
+/*static int
+looser_pri_test(int cpuid, cpumask_t from_mask)
+{
+	cpumask_t mask;
+	bsd4_pcpu_t dd = &bsd4_pcpu[cpuid];
+	bsd4_pcpu_t other_dd;
+	int cpu;
 
+	mask = bsd4_curprocmask & ~CPUMASK(cpuid);
+
+	CPUSET_FOREACH(cpu, from_mask) {
+		other_dd = &bsd4_pcpu[cpu];
+		if (other_dd->upri - dd->upri > usched_bsd4_upri_affinity * PPQ) {
+			return 0;
+		}
+	}
+	return 1;
+}
+*/
+static int
+batchy_looser_pri_test(struct lwp* lp)
+{
+	cpumask_t mask;
+	bsd4_pcpu_t other_dd;
+	bsd4_pcpu_t dd = &bsd4_pcpu[mycpu->gd_cpuid];
+	int cpu;
+
+	mask = bsd4_curprocmask;
+
+	CPUSET_FOREACH(cpu, mask) {
+		other_dd = &bsd4_pcpu[cpu];
+		if (other_dd->upri - lp->lwp_priority > usched_bsd4_upri_affinity * PPQ) {
+					/*if (usched_bsd4_pid_debug == lp->lwp_proc->p_pid) {
+
+						kprintf("batchy_looser_pri_test FALSE %d %d: old - %d vs. new - %d\n", lp->lwp_tid, lp->lwp_proc->p_pid, lp->lwp_thread->td_gd->gd_cpuid, cpu);
+					}*/
+
+			return 0;
+		}
+	}
+	/*if (usched_bsd4_pid_debug == lp->lwp_proc->p_pid) {
+		kprintf("batchy_looser_pri_test TRUE %d %d: old - %d; mask: %ld\n", lp->lwp_tid, lp->lwp_proc->p_pid, lp->lwp_thread->td_gd->gd_cpuid, mask);
+	}*/
+	dd->batch_test_pass = 1;
+	return 1;
+}
+
+#endif
 /*
+ *
  * BSD4_SETRUNQUEUE
  *
  * Place the specified lwp on the user scheduler's run queue.  This routine
@@ -451,7 +566,7 @@ bsd4_setrunqueue(struct lwp *lp)
 	int cpuid;
 	cpumask_t mask;
 	cpumask_t tmpmask;
-	cpu_node_t *cpunode;
+//	cpu_node_t *cpunode;
 #endif
 
 	/*
@@ -518,6 +633,7 @@ bsd4_setrunqueue(struct lwp *lp)
 	 */
 	spin_lock(&bsd4_spin);
 	bsd4_setrunqueue_locked(lp);
+	lp->lwp_setrunqueue_ticks = sched_ticks;
 
 #ifdef SMP
 	/*
@@ -529,54 +645,75 @@ bsd4_setrunqueue(struct lwp *lp)
 	 *	 cpus with designated lps with a worse priority than our
 	 *	 process.
 	 */
-	if(usched_bsd4_smt_enable) {
+	++bsd4_scancpu;
+
+/*	if(usched_bsd4_smt_enable) {
 		cpunode = bsd4_pcpu[lp->lwp_thread->td_gd->gd_cpuid].cpunode;
+		cpumask_t old_members_mask = 0;
 		while(cpunode != NULL) {
+			cpuid = (bsd4_scancpu & 0xFFFF) % ncpus;
 			mask = ~bsd4_curprocmask & bsd4_rdyprocmask & lp->lwp_cpumask &
-			    smp_active_mask & usched_global_cpumask & cpunode->members;
+			    smp_active_mask & usched_global_cpumask &
+			    cpunode->members & ~old_members_mask;
 
 			while (mask) {
-				cpuid = BSFCPUMASK(mask);
+				tmpmask = ~(CPUMASK(cpuid) - 1);
+				if (mask & tmpmask)
+					cpuid = BSFCPUMASK(mask & tmpmask);
+				else
+					cpuid = BSFCPUMASK(mask);
+
 				gd = globaldata_find(cpuid);
 				dd = &bsd4_pcpu[cpuid];
 
-				if ((dd->upri & ~PPQMASK) >= (lp->lwp_priority & ~PPQMASK)) {
+				if ((dd->upri & ~PPQMASK) >= (lp->lwp_priority & ~PPQMASK) ){//&&
+						//looser_pri_test(cpuid, bsd4_curprocmask & cpunode->members & ~tmpmask)) {
+					
 					usched_bsd4_smt_enter++;
-					//kprintf("usched_bsd4_smt_enter %d: %d %d: old - %d vs. new - %d\n", usched_bsd4_smt_enter, lp->lwp_tid, lp->lwp_proc->p_pid, lp->lwp_thread->td_gd->gd_cpuid, cpuid);
+//					if (usched_bsd4_pid_debug == lp->lwp_proc->p_pid) {
+//						kprintf("usched_bsd4_smt_enter %d: %d %d: old - %d vs. new - %d\n", usched_bsd4_smt_enter, lp->lwp_tid, lp->lwp_proc->p_pid, lp->lwp_thread->td_gd->gd_cpuid, cpuid);
+//	}
 					goto found;
 				}
 				mask &= ~CPUMASK(cpuid);
 			}
 
 			mask = bsd4_curprocmask & bsd4_rdyprocmask & lp->lwp_cpumask &
-			    smp_active_mask & usched_global_cpumask & cpunode->members;
+			    smp_active_mask & usched_global_cpumask &
+			    cpunode->members & ~old_members_mask;
 
 			while (mask) {
-				cpuid = BSFCPUMASK(mask);
+				tmpmask = ~(CPUMASK(cpuid) - 1);
+				if (mask & tmpmask)
+					cpuid = BSFCPUMASK(mask & tmpmask);
+				else
+					cpuid = BSFCPUMASK(mask);
 				gd = globaldata_find(cpuid);
 				dd = &bsd4_pcpu[cpuid];
 
-				if ((dd->upri & ~PPQMASK) > (lp->lwp_priority & ~PPQMASK)) {
+				if ((dd->upri & ~PPQMASK) > (lp->lwp_priority & ~PPQMASK)){ //&&
+						//looser_pri_test(cpuid, bsd4_curprocmask & cpunode->members & ~tmpmask)) {
 					usched_bsd4_smt_enter++;
-					//kprintf("usched_bsd4_smt_enter2 %d: %d %d: old - %d vs. new - %d\n", usched_bsd4_smt_enter, lp->lwp_tid, lp->lwp_proc->p_pid, lp->lwp_thread->td_gd->gd_cpuid, cpuid);
-
+//				if (usched_bsd4_pid_debug == lp->lwp_proc->p_pid) {
+//						kprintf("usched_bsd4_smt_enter2 %d: %d %d: old - %d vs. new - %d\n", usched_bsd4_smt_enter, lp->lwp_tid, lp->lwp_proc->p_pid, lp->lwp_thread->td_gd->gd_cpuid, cpuid);
+//					}
 					goto found;
 				}
 				mask &= ~CPUMASK(cpuid);
 			}
+			old_members_mask = cpunode->members;
 			cpunode = cpunode->parent_node;
 		}
 
-		cpuid = lp->lwp_thread->td_gd->gd_cpuid;
-		gd = globaldata_find(cpuid);
-		dd= &bsd4_pcpu[cpuid];
-		//kprintf("usched_bsd4_smt_notfound: %d %d: old - %d vs. new - %d\n", lp->lwp_tid, lp->lwp_proc->p_pid, lp->lwp_thread->td_gd->gd_cpuid, cpuid);
+//	if (usched_bsd4_pid_debug == lp->lwp_proc->p_pid) {
 
+//		kprintf("usched_bsd4_smt_notfound let for roundorbin: %d %d: old - %d\n", lp->lwp_tid, lp->lwp_proc->p_pid, lp->lwp_thread->td_gd->gd_cpuid);
+//		}
 
 	}
+*/
 
-
-//	if(usched_bsd4_ht_enable) {
+	if(usched_bsd4_ht_enable) {
 
 /*		if (lp->lwp_proc->p_nthreads > 1) {
 
@@ -606,7 +743,7 @@ bsd4_setrunqueue(struct lwp *lp)
 			}
 		}
 */
-/*
+
 		cpuid = (bsd4_scancpu & 0xFFFF) % ncpus;
 		mask = ~bsd4_curprocmask & bsd4_rdyprocmask & lp->lwp_cpumask &
 		    smp_active_mask & usched_global_cpumask;
@@ -646,10 +783,9 @@ bsd4_setrunqueue(struct lwp *lp)
 			dd = &bsd4_pcpu[cpuid];
 			usched_bsd4_minbatch++;
 			goto found;
-		}*/
-//	}
-	else {
-	++bsd4_scancpu;
+		}
+	}
+//	else {
 	cpuid = (bsd4_scancpu & 0xFFFF) % ncpus;
 	mask = ~bsd4_curprocmask & bsd4_rdyprocmask & lp->lwp_cpumask &
 	       smp_active_mask & usched_global_cpumask;
@@ -687,6 +823,7 @@ bsd4_setrunqueue(struct lwp *lp)
 			goto found;
 		mask &= ~CPUMASK(cpuid);
 	}
+//	}
 	
 	/*
 	 * If we cannot find a suitable cpu we reload from bsd4_scancpu
@@ -705,14 +842,13 @@ bsd4_setrunqueue(struct lwp *lp)
 	}
 	gd = globaldata_find(cpuid);
 	dd = &bsd4_pcpu[cpuid];
-	//kprintf("usched_bsd4_no_freecpu: %d %d: old - %d vs. new - %d\n", lp->lwp_tid, lp->lwp_proc->p_pid, lp->lwp_thread->td_gd->gd_cpuid, cpuid);
-	}
+
 found:
 	if (gd == mycpu) {
 		spin_unlock(&bsd4_spin);
 		if ((dd->upri & ~PPQMASK) > (lp->lwp_priority & ~PPQMASK)) {
 			if (dd->uschedcp == NULL) {
-				lwkt_schedule(&dd->helper_thread);
+				wakeup(&dd->helper_thread);
 			} else {
 				need_user_resched();
 			}
@@ -723,7 +859,7 @@ found:
 		if ((dd->upri & ~PPQMASK) > (lp->lwp_priority & ~PPQMASK))
 			lwkt_send_ipiq(gd, need_user_resched_remote, NULL);
 		else
-			lwkt_schedule(&dd->helper_thread);
+			wakeup(&dd->helper_thread);
 	}
 #else
 	/*
@@ -1124,6 +1260,159 @@ static void
 bsd4_exiting(struct lwp *lp, struct proc *child_proc)
 {
 }
+#if !defined(KTR_USCHED_BSD4)
+#define	KTR_USCHED_BSD4	KTR_ALL
+#endif
+KTR_INFO_MASTER(usched_bsd4_entry);
+KTR_INFO(KTR_USCHED_BSD4, usched_bsd4_entry, chooseproc, 0,
+    "USCHED_BSD4(pid %d, oldcpuid %d, oldcpumask %ld, sibling_mask %ld, &: %ld)",
+    pid_t pid, int oldcpuid, cpumask_t oldcpumask, cpumask_t sibling_mask, cpumask_t and);
+KTR_INFO(KTR_USCHED_BSD4, usched_bsd4_entry, chooseproc_not, 0,
+    "USCHED_BSD4_NOT_GOOD(pid %d, oldcpuid %d, oldcpumask %ld, sibling_mask %ld, &: %ld)",
+    pid_t pid, int oldcpuid, cpumask_t oldcpumask, cpumask_t sibling_mask, cpumask_t and);
+KTR_INFO(KTR_USCHED_BSD4, usched_bsd4_entry, chooseproc_ellected, 0,
+    "USCHED_BSD4_ELLECTED(pid %d, oldcpuid %d, oldcpumask %ld, sibling_mask %ld, &: %ld)",
+    pid_t pid, int oldcpuid, cpumask_t oldcpumask, cpumask_t sibling_mask, cpumask_t and);
+
+static
+struct lwp *
+chooseproc_locked2(struct lwp *chklp)
+{
+	struct lwp *lp;
+	struct rq *q;
+	u_int32_t *which, *which2;
+	u_int32_t pri;
+	u_int32_t rtqbits;
+	u_int32_t tsqbits;
+	u_int32_t idqbits;
+	cpumask_t cpumask;
+	cpumask_t siblings;
+
+	rtqbits = bsd4_rtqueuebits;
+	tsqbits = bsd4_queuebits;
+	idqbits = bsd4_idqueuebits;
+	cpumask = mycpu->gd_cpumask;
+
+	if (usched_bsd4_ht_enable)
+		siblings = bsd4_pcpu[mycpu->gd_cpuid].cpunode->parent_node->members;
+	else
+		siblings = bsd4_pcpu[mycpu->gd_cpuid].cpunode->members;
+
+	/* number of levels < MAXCPU */
+//	u_int32_t min_level = MAXCPU;
+//	struct lwp * min_level_lwp = NULL;
+
+#ifdef SMP
+again:
+#endif
+	if (rtqbits) {
+		pri = bsfl(rtqbits);
+		q = &bsd4_rtqueues[pri];
+		which = &bsd4_rtqueuebits;
+		which2 = &rtqbits;
+	} else if (tsqbits) {
+		pri = bsfl(tsqbits);
+		q = &bsd4_queues[pri];
+		which = &bsd4_queuebits;
+		which2 = &tsqbits;
+	} else if (idqbits) {
+		pri = bsfl(idqbits);
+		q = &bsd4_idqueues[pri];
+		which = &bsd4_idqueuebits;
+		which2 = &idqbits;
+	} else {
+		return NULL;
+	}
+	lp = TAILQ_FIRST(q);
+	KASSERT(lp, ("chooseproc: no lwp on busy queue"));
+
+#ifdef SMP
+	for (;;) {
+		/*if (usched_bsd4_pid_debug == lp->lwp_proc->p_pid) {
+		kprintf("choose proc locked2 %d %d: old - %d; new: %d; lp_schedticks: %d; sched_ticks: %d\n", lp->lwp_tid, lp->lwp_proc->p_pid, lp->lwp_thread->td_gd->gd_cpuid,  mycpu->gd_cpuid, lp->lwp_setrunqueue_ticks, sched_ticks);
+	}*/
+		KTR_LOG(usched_bsd4_entry_chooseproc, lp->lwp_proc->p_pid, lp->lwp_thread->td_gd->gd_cpuid, lp->lwp_thread->td_gd->gd_cpumask, siblings, (siblings & lp->lwp_thread->td_gd->gd_cpumask));
+
+		if ((lp->lwp_cpumask & cpumask) == 0 ||
+			((siblings & lp->lwp_thread->td_gd->gd_cpumask) == 0 &&
+			 batchy_looser_pri_test(lp) &&
+			(lp->lwp_setrunqueue_ticks == sched_ticks || lp->lwp_setrunqueue_ticks == (int)(sched_ticks - 1)))) {
+	
+			KTR_LOG(usched_bsd4_entry_chooseproc_not, lp->lwp_proc->p_pid, lp->lwp_thread->td_gd->gd_cpuid, lp->lwp_thread->td_gd->gd_cpumask, siblings, (siblings & lp->lwp_thread->td_gd->gd_cpumask));
+
+			lp = TAILQ_NEXT(lp, lwp_procq);
+			if (lp == NULL) {
+				*which2 &= ~(1 << pri);
+				goto again;
+			}
+		} else {
+			KTR_LOG(usched_bsd4_entry_chooseproc_ellected, lp->lwp_proc->p_pid, lp->lwp_thread->td_gd->gd_cpuid, lp->lwp_thread->td_gd->gd_cpumask, siblings, (siblings & lp->lwp_thread->td_gd->gd_cpumask));
+
+
+			break;
+		}
+	}
+#endif
+
+	/*
+	 * If the passed lwp <chklp> is reasonably close to the selected
+	 * lwp <lp>, return NULL (indicating that <chklp> should be kept).
+	 * 
+	 * Note that we must error on the side of <chklp> to avoid bouncing
+	 * between threads in the acquire code.
+	 */
+	if (chklp) {
+		if (chklp->lwp_priority < lp->lwp_priority + PPQ)
+			return(NULL);
+	}
+
+#ifdef SMP
+	/*
+	 * If the chosen lwp does not reside on this cpu spend a few
+	 * cycles looking for a better candidate at the same priority level.
+	 * This is a fallback check, setrunqueue() tries to wakeup the
+	 * correct cpu and is our front-line affinity.
+	 */
+	/*
+	if (lp->lwp_thread->td_gd != mycpu &&
+	    (chklp = TAILQ_NEXT(lp, lwp_procq)) != NULL
+	) {
+		if (chklp->lwp_thread->td_gd == mycpu) {
+			++choose_affinity;
+			lp = chklp;
+		}
+	}*/
+
+
+/*		cpu_node_t* cpunode = bsd4_pcpu[lp->lwp_thread->td_gd->gd_cpuid].cpunode;
+		u_int32_t level = 0;
+
+		while (cpunode) {
+			if (cpunode->members & cpumask) {
+				break;
+			}
+			cpunode = cpunode->parent_node;
+			level++;
+		}
+		if (level < min_level) {
+			min_level_lwp = lp;
+			min_level = level;
+		}
+		bsd4_pcpu[mycpu->gd_cpuid].num_of_procs++;
+		lp = TAILQ_NEXT(lp, lwp_procq);
+	}
+	lp = min_level_lwp;*/
+
+#endif
+
+	TAILQ_REMOVE(q, lp, lwp_procq);
+	--bsd4_runqcount;
+	if (TAILQ_EMPTY(q))
+		*which &= ~(1 << pri);
+	KASSERT((lp->lwp_mpflags & LWP_MP_ONRUNQ) != 0, ("not on runq6!"));
+	atomic_clear_int(&lp->lwp_mpflags, LWP_MP_ONRUNQ);
+	return lp;
+}
 
 /*
  * chooseproc() is called when a cpu needs a user process to LWKT schedule,
@@ -1237,7 +1526,7 @@ need_user_resched_remote(void *dummy)
 	bsd4_pcpu_t  dd = &bsd4_pcpu[gd->gd_cpuid];
 
 	need_user_resched();
-	lwkt_schedule(&dd->helper_thread);
+	wakeup(&dd->helper_thread);
 }
 
 #endif
@@ -1386,19 +1675,25 @@ sched_thread(void *dummy)
      */
     lwkt_setpri_self(TDPRI_USER_SCHEDULER);
 
+    tsleep(&dd->helper_thread, PINTERLOCKED, "sched_thread_sleep", 0);
+
     for (;;) {
+//again:
 	/*
 	 * We use the LWKT deschedule-interlock trick to avoid racing
 	 * bsd4_rdyprocmask.  This means we cannot block through to the
 	 * manual lwkt_switch() call we make below.
 	 */
 	crit_enter_gd(gd);
-	lwkt_deschedule_self(gd->gd_curthread);
+	//lwkt_deschedule_self(gd->gd_curthread);
+	tsleep_interlock(&dd->helper_thread, 0);
 	spin_lock(&bsd4_spin);
 	atomic_set_cpumask(&bsd4_rdyprocmask, mask);
 
 	clear_user_resched();	/* This satisfied the reschedule request */
 	dd->rrcount = 0;	/* Reset the round-robin counter */
+
+	dd->batch_test_pass = 0;
 
 	if ((bsd4_curprocmask & mask) == 0) {
 		/*
@@ -1406,6 +1701,10 @@ sched_thread(void *dummy)
 		 */
 		KKASSERT(dd->uschedcp == NULL);
 		if ((nlp = chooseproc_locked(NULL)) != NULL) {
+			/*if (usched_bsd4_pid_debug == nlp->lwp_proc->p_pid) {
+				kprintf ("sched_thread no thread is currently  : %d; cpuid: %d\n", nlp->lwp_proc->p_pid, nlp->lwp_thread->td_gd->gd_cpuid);
+			}*/
+
 			atomic_set_cpumask(&bsd4_curprocmask, mask);
 			dd->upri = nlp->lwp_priority;
 			dd->uschedcp = nlp;
@@ -1416,9 +1715,19 @@ sched_thread(void *dummy)
 			lwkt_schedule(nlp->lwp_thread);
 		} else {
 			spin_unlock(&bsd4_spin);
+/*			if (dd->batch_test_pass) {
+				crit_exit_gd(gd);
+				tsleep(&dd->helper_thread, PINTERLOCKED, "sched_thread_sleep", 1);
+				goto again;
+			}*/
 		}
 	} else if (bsd4_runqcount) {
 		if ((nlp = chooseproc_locked(dd->uschedcp)) != NULL) {
+			/*if (usched_bsd4_pid_debug == nlp->lwp_proc->p_pid) {
+				kprintf ("sched_thread bsd4_runqcount! : %d; cpuid: %d\n", nlp->lwp_proc->p_pid, nlp->lwp_thread->td_gd->gd_cpuid);
+			}*/
+
+
 			dd->upri = nlp->lwp_priority;
 			dd->uschedcp = nlp;
 			spin_unlock(&bsd4_spin);
@@ -1438,18 +1747,25 @@ sched_thread(void *dummy)
 			 * to priority test does not leave other unscheduled
 			 * cpus idle when the runqueue is not empty.
 			 */
-			tmpmask = ~bsd4_curprocmask & bsd4_rdyprocmask &
-				  smp_active_mask;
-			if (tmpmask) {
-				tmpid = BSFCPUMASK(tmpmask);
-				tmpdd = &bsd4_pcpu[tmpid];
-				atomic_clear_cpumask(&bsd4_rdyprocmask,
-						     CPUMASK(tmpid));
+/*			if (dd->batch_test_pass) {
 				spin_unlock(&bsd4_spin);
-				lwkt_schedule(&tmpdd->helper_thread);
-			} else {
-				spin_unlock(&bsd4_spin);
-			}
+				crit_exit_gd(gd);
+				tsleep(&dd->helper_thread, PINTERLOCKED, "sched_thread_sleep", 1);
+				goto again;
+			} else {*/
+				tmpmask = ~bsd4_curprocmask & bsd4_rdyprocmask &
+					  smp_active_mask;
+				if (tmpmask) {
+					tmpid = BSFCPUMASK(tmpmask);
+					tmpdd = &bsd4_pcpu[tmpid];
+					atomic_clear_cpumask(&bsd4_rdyprocmask,
+							     CPUMASK(tmpid));
+					spin_unlock(&bsd4_spin);
+					wakeup(&tmpdd->helper_thread);
+				} else {
+					spin_unlock(&bsd4_spin);
+				}
+//			}
 		}
 	} else {
 		/*
@@ -1464,7 +1780,8 @@ sched_thread(void *dummy)
 	 * for us if interrupts and such are pending.
 	 */
 	crit_exit_gd(gd);
-	lwkt_switch();
+	tsleep(&dd->helper_thread, PINTERLOCKED, "sched_thread_sleep", 0);
+//	lwkt_switch();
     }
 }
 
@@ -1481,8 +1798,8 @@ sched_thread_cpu_init(void)
 	int smt_not_supported = 0;
 	if (bootverbose)
 		kprintf("Start scheduler helpers on cpus:\n");
-    
-	sysctl_ctx_init(&usched_bsd4_sysctl_ctx); 
+
+	sysctl_ctx_init(&usched_bsd4_sysctl_ctx);
 	usched_bsd4_sysctl_tree = SYSCTL_ADD_NODE(&usched_bsd4_sysctl_ctx,
 	    SYSCTL_STATIC_CHILDREN(_kern), OID_AUTO,
 	    "usched_bsd4", CTLFLAG_RD, 0, "");
@@ -1532,13 +1849,13 @@ sched_thread_cpu_init(void)
 					CPUSET_FOREACH(cpuid, dd->cpunode->parent_node->members)
 						kprintf("cpu%d ", cpuid);
 					kprintf("\n");
-					} else {
-						kprintf(" no siblings\n");
-					}
+				} else {
+					kprintf(" no siblings\n");
+				}
 			}
 		}
 
-		lwkt_create(sched_thread, NULL, NULL, &dd->helper_thread, 
+		lwkt_create(sched_thread, NULL, NULL, &dd->helper_thread,
 		    TDF_NOSTART, i, "usched %d", i);
 
 		/*
@@ -1549,6 +1866,7 @@ sched_thread_cpu_init(void)
 		    atomic_clear_cpumask(&bsd4_curprocmask, mask);
 		atomic_set_cpumask(&bsd4_rdyprocmask, mask);
 		dd->upri = PRIBASE_NULL;
+
 	}
 
 	/* usched_bsd4 sysctl configurable parameters */
@@ -1595,8 +1913,13 @@ sched_thread_cpu_init(void)
 		    OID_AUTO, "smt_enable", CTLFLAG_RW,
 		    &usched_bsd4_smt_enable, 0, "Enable/Disable HT aware scheduling");
 
-	}
+		SYSCTL_ADD_INT(&usched_bsd4_sysctl_ctx,
+		    SYSCTL_CHILDREN(usched_bsd4_sysctl_tree),
+		    OID_AUTO, "upri_affinity", CTLFLAG_RW,
+		    &usched_bsd4_upri_affinity, 1, "Number of PPQs in user priority check");
 
+	}
+	chooseproc_locked2(NULL);
 }
 SYSINIT(uschedtd, SI_BOOT2_USCHED, SI_ORDER_SECOND,
 	sched_thread_cpu_init, NULL)
