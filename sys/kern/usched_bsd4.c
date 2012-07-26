@@ -1856,7 +1856,7 @@ sched_thread_cpu_init(void)
 		}
 
 		lwkt_create(sched_thread, NULL, NULL, &dd->helper_thread,
-		    TDF_NOSTART, i, "usched %d", i);
+		    0, i, "usched %d", i);
 
 		/*
 		 * Allow user scheduling on the target cpu.  cpu #0 has already
@@ -1919,7 +1919,6 @@ sched_thread_cpu_init(void)
 		    &usched_bsd4_upri_affinity, 1, "Number of PPQs in user priority check");
 
 	}
-	chooseproc_locked2(NULL);
 }
 SYSINIT(uschedtd, SI_BOOT2_USCHED, SI_ORDER_SECOND,
 	sched_thread_cpu_init, NULL)
