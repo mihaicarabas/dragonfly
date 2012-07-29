@@ -1152,7 +1152,7 @@ FUNC_B:
 		ecx_index++;
 	} while (FUNC_B_TYPE(p[2]) != FUNC_B_INVALID_TYPE);
 
-	core_bits = (~(-1 << core_plus_logical_bits)) >> logical_CPU_bits;
+	core_bits = core_plus_logical_bits - logical_CPU_bits;
 
 	return;
 
