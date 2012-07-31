@@ -566,7 +566,7 @@ bsd4_setrunqueue(struct lwp *lp)
 	int cpuid;
 	cpumask_t mask;
 	cpumask_t tmpmask;
-//	cpu_node_t *cpunode;
+	cpu_node_t *cpunode;
 #endif
 
 	/*
@@ -647,73 +647,8 @@ bsd4_setrunqueue(struct lwp *lp)
 	 */
 	++bsd4_scancpu;
 
-/*	if(usched_bsd4_smt_enable) {
-		cpunode = bsd4_pcpu[lp->lwp_thread->td_gd->gd_cpuid].cpunode;
-		cpumask_t old_members_mask = 0;
-		while(cpunode != NULL) {
-			cpuid = (bsd4_scancpu & 0xFFFF) % ncpus;
-			mask = ~bsd4_curprocmask & bsd4_rdyprocmask & lp->lwp_cpumask &
-			    smp_active_mask & usched_global_cpumask &
-			    cpunode->members & ~old_members_mask;
 
-			while (mask) {
-				tmpmask = ~(CPUMASK(cpuid) - 1);
-				if (mask & tmpmask)
-					cpuid = BSFCPUMASK(mask & tmpmask);
-				else
-					cpuid = BSFCPUMASK(mask);
-
-				gd = globaldata_find(cpuid);
-				dd = &bsd4_pcpu[cpuid];
-
-				if ((dd->upri & ~PPQMASK) >= (lp->lwp_priority & ~PPQMASK) ){//&&
-						//looser_pri_test(cpuid, bsd4_curprocmask & cpunode->members & ~tmpmask)) {
-					
-					usched_bsd4_smt_enter++;
-//					if (usched_bsd4_pid_debug == lp->lwp_proc->p_pid) {
-//						kprintf("usched_bsd4_smt_enter %d: %d %d: old - %d vs. new - %d\n", usched_bsd4_smt_enter, lp->lwp_tid, lp->lwp_proc->p_pid, lp->lwp_thread->td_gd->gd_cpuid, cpuid);
-//	}
-					goto found;
-				}
-				mask &= ~CPUMASK(cpuid);
-			}
-
-			mask = bsd4_curprocmask & bsd4_rdyprocmask & lp->lwp_cpumask &
-			    smp_active_mask & usched_global_cpumask &
-			    cpunode->members & ~old_members_mask;
-
-			while (mask) {
-				tmpmask = ~(CPUMASK(cpuid) - 1);
-				if (mask & tmpmask)
-					cpuid = BSFCPUMASK(mask & tmpmask);
-				else
-					cpuid = BSFCPUMASK(mask);
-				gd = globaldata_find(cpuid);
-				dd = &bsd4_pcpu[cpuid];
-
-				if ((dd->upri & ~PPQMASK) > (lp->lwp_priority & ~PPQMASK)){ //&&
-						//looser_pri_test(cpuid, bsd4_curprocmask & cpunode->members & ~tmpmask)) {
-					usched_bsd4_smt_enter++;
-//				if (usched_bsd4_pid_debug == lp->lwp_proc->p_pid) {
-//						kprintf("usched_bsd4_smt_enter2 %d: %d %d: old - %d vs. new - %d\n", usched_bsd4_smt_enter, lp->lwp_tid, lp->lwp_proc->p_pid, lp->lwp_thread->td_gd->gd_cpuid, cpuid);
-//					}
-					goto found;
-				}
-				mask &= ~CPUMASK(cpuid);
-			}
-			old_members_mask = cpunode->members;
-			cpunode = cpunode->parent_node;
-		}
-
-//	if (usched_bsd4_pid_debug == lp->lwp_proc->p_pid) {
-
-//		kprintf("usched_bsd4_smt_notfound let for roundorbin: %d %d: old - %d\n", lp->lwp_tid, lp->lwp_proc->p_pid, lp->lwp_thread->td_gd->gd_cpuid);
-//		}
-
-	}
-*/
-
-	if(usched_bsd4_ht_enable) {
+//	if(usched_bsd4_ht_enable) {
 
 /*		if (lp->lwp_proc->p_nthreads > 1) {
 
@@ -743,7 +678,7 @@ bsd4_setrunqueue(struct lwp *lp)
 			}
 		}
 */
-
+/*
 		cpuid = (bsd4_scancpu & 0xFFFF) % ncpus;
 		mask = ~bsd4_curprocmask & bsd4_rdyprocmask & lp->lwp_cpumask &
 		    smp_active_mask & usched_global_cpumask;
@@ -784,7 +719,7 @@ bsd4_setrunqueue(struct lwp *lp)
 			usched_bsd4_minbatch++;
 			goto found;
 		}
-	}
+	}*/
 //	else {
 	cpuid = (bsd4_scancpu & 0xFFFF) % ncpus;
 	mask = ~bsd4_curprocmask & bsd4_rdyprocmask & lp->lwp_cpumask &
@@ -1265,14 +1200,14 @@ bsd4_exiting(struct lwp *lp, struct proc *child_proc)
 #endif
 KTR_INFO_MASTER(usched_bsd4_entry);
 KTR_INFO(KTR_USCHED_BSD4, usched_bsd4_entry, chooseproc, 0,
-    "USCHED_BSD4(pid %d, oldcpuid %d, oldcpumask %ld, sibling_mask %ld, &: %ld)",
-    pid_t pid, int oldcpuid, cpumask_t oldcpumask, cpumask_t sibling_mask, cpumask_t and);
+    "USCHED_BSD4(pid %d, tid %d, oldcpuid %d, oldcpumask %ld, sibling_mask %ld, &: %ld, curr: %ld)",
+    pid_t pid, lwpid_t tid, int oldcpuid, cpumask_t oldcpumask, cpumask_t sibling_mask, cpumask_t and, cpumask_t curr);
 KTR_INFO(KTR_USCHED_BSD4, usched_bsd4_entry, chooseproc_not, 0,
-    "USCHED_BSD4_NOT_GOOD(pid %d, oldcpuid %d, oldcpumask %ld, sibling_mask %ld, &: %ld)",
-    pid_t pid, int oldcpuid, cpumask_t oldcpumask, cpumask_t sibling_mask, cpumask_t and);
+    "USCHED_BSD4_NOT_GOOD(pid %d, tid %d, oldcpuid %d, oldcpumask %ld, sibling_mask %ld, &: %ld, curr: %ld)",
+    pid_t pid, lwpid_t tid, int oldcpuid, cpumask_t oldcpumask, cpumask_t sibling_mask, cpumask_t and, cpumask_t curr);
 KTR_INFO(KTR_USCHED_BSD4, usched_bsd4_entry, chooseproc_ellected, 0,
-    "USCHED_BSD4_ELLECTED(pid %d, oldcpuid %d, oldcpumask %ld, sibling_mask %ld, &: %ld)",
-    pid_t pid, int oldcpuid, cpumask_t oldcpumask, cpumask_t sibling_mask, cpumask_t and);
+    "USCHED_BSD4_ELLECTED(pid %d, tid %d, oldcpuid %d, oldcpumask %ld, sibling_mask %ld, &: %ld, curr: %ld)",
+    pid_t pid, lwpid_t tid, int oldcpuid, cpumask_t oldcpumask, cpumask_t sibling_mask, cpumask_t and, cpumask_t curr);
 
 static
 struct lwp *
@@ -1331,14 +1266,14 @@ again:
 		/*if (usched_bsd4_pid_debug == lp->lwp_proc->p_pid) {
 		kprintf("choose proc locked2 %d %d: old - %d; new: %d; lp_schedticks: %d; sched_ticks: %d\n", lp->lwp_tid, lp->lwp_proc->p_pid, lp->lwp_thread->td_gd->gd_cpuid,  mycpu->gd_cpuid, lp->lwp_setrunqueue_ticks, sched_ticks);
 	}*/
-		KTR_LOG(usched_bsd4_entry_chooseproc, lp->lwp_proc->p_pid, lp->lwp_thread->td_gd->gd_cpuid, lp->lwp_thread->td_gd->gd_cpumask, siblings, (siblings & lp->lwp_thread->td_gd->gd_cpumask));
+		KTR_LOG(usched_bsd4_entry_chooseproc, lp->lwp_proc->p_pid, lp->lwp_tid, lp->lwp_thread->td_gd->gd_cpuid, lp->lwp_thread->td_gd->gd_cpumask, siblings, (siblings & lp->lwp_thread->td_gd->gd_cpumask), bsd4_pcpu[mycpu->gd_cpuid].cpunode->members);
 
 		if ((lp->lwp_cpumask & cpumask) == 0 ||
 			((siblings & lp->lwp_thread->td_gd->gd_cpumask) == 0 &&
 			 batchy_looser_pri_test(lp) &&
 			(lp->lwp_setrunqueue_ticks == sched_ticks || lp->lwp_setrunqueue_ticks == (int)(sched_ticks - 1)))) {
 	
-			KTR_LOG(usched_bsd4_entry_chooseproc_not, lp->lwp_proc->p_pid, lp->lwp_thread->td_gd->gd_cpuid, lp->lwp_thread->td_gd->gd_cpumask, siblings, (siblings & lp->lwp_thread->td_gd->gd_cpumask));
+			KTR_LOG(usched_bsd4_entry_chooseproc_not, lp->lwp_proc->p_pid, lp->lwp_tid, lp->lwp_thread->td_gd->gd_cpuid, lp->lwp_thread->td_gd->gd_cpumask, siblings, (siblings & lp->lwp_thread->td_gd->gd_cpumask), bsd4_pcpu[mycpu->gd_cpuid].cpunode->members);
 
 			lp = TAILQ_NEXT(lp, lwp_procq);
 			if (lp == NULL) {
@@ -1346,7 +1281,7 @@ again:
 				goto again;
 			}
 		} else {
-			KTR_LOG(usched_bsd4_entry_chooseproc_ellected, lp->lwp_proc->p_pid, lp->lwp_thread->td_gd->gd_cpuid, lp->lwp_thread->td_gd->gd_cpumask, siblings, (siblings & lp->lwp_thread->td_gd->gd_cpumask));
+			KTR_LOG(usched_bsd4_entry_chooseproc_ellected, lp->lwp_proc->p_pid, lp->lwp_tid, lp->lwp_thread->td_gd->gd_cpuid, lp->lwp_thread->td_gd->gd_cpumask, siblings, (siblings & lp->lwp_thread->td_gd->gd_cpumask), bsd4_pcpu[mycpu->gd_cpuid].cpunode->members);
 
 
 			break;
