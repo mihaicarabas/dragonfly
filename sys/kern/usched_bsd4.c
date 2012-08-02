@@ -679,13 +679,14 @@ bsd4_setrunqueue(struct lwp *lp)
 			}
 		}
 */
-
+		/* SMT heuristic - Try to schedule on a free physical core. If no physical core
+		 * found than choose the one that has an interactive thread
+		 */
 		cpuid = (bsd4_scancpu & 0xFFFF) % ncpus;
 		mask = ~bsd4_curprocmask & bsd4_rdyprocmask & lp->lwp_cpumask &
 		    smp_active_mask & usched_global_cpumask;
 		int best_cpuid = -1;
-		int min_batch = BATCHMAX;
-
+		int min_prio = MAXPRI * MAXPRI;
 		while (mask) {
 			tmpmask = ~(CPUMASK(cpuid) - 1);
 			if (mask & tmpmask)
@@ -701,12 +702,9 @@ bsd4_setrunqueue(struct lwp *lp)
 					goto found;
 				} else {
 					int sibling = BSFCPUMASK(dd->cpunode->parent_node->members & ~dd->cpunode->members);
-					if (bsd4_pcpu[sibling].uschedcp != NULL) {
-						int batch_h = bsd4_pcpu[sibling].uschedcp->lwp_batch;
-						if (min_batch > batch_h) {
-							min_batch = batch_h;
-							best_cpuid = cpuid;
-						}
+					if (min_prio > bsd4_pcpu[sibling].upri) {
+						min_prio = bsd4_pcpu[sibling].upri;
+						best_cpuid = cpuid;
 					}
 				}
 			}
@@ -720,24 +718,26 @@ bsd4_setrunqueue(struct lwp *lp)
 			usched_bsd4_minbatch++;
 			goto found;
 		}
-	}
-//	else {
-	cpuid = (bsd4_scancpu & 0xFFFF) % ncpus;
-	mask = ~bsd4_curprocmask & bsd4_rdyprocmask & lp->lwp_cpumask &
-	       smp_active_mask & usched_global_cpumask;
+	} else {
+		/* Fallback to the original heuristic */
+		cpuid = (bsd4_scancpu & 0xFFFF) % ncpus;
+		mask = ~bsd4_curprocmask & bsd4_rdyprocmask & lp->lwp_cpumask &
+		       smp_active_mask & usched_global_cpumask;
 
-	while (mask) {
-		tmpmask = ~(CPUMASK(cpuid) - 1);
-		if (mask & tmpmask)
-			cpuid = BSFCPUMASK(mask & tmpmask);
-		else
-			cpuid = BSFCPUMASK(mask);
-		gd = globaldata_find(cpuid);
-		dd = &bsd4_pcpu[cpuid];
+		while (mask) {
+			tmpmask = ~(CPUMASK(cpuid) - 1);
+			if (mask & tmpmask)
+				cpuid = BSFCPUMASK(mask & tmpmask);
+			else
+				cpuid = BSFCPUMASK(mask);
+			gd = globaldata_find(cpuid);
+			dd = &bsd4_pcpu[cpuid];
 
-		if ((dd->upri & ~PPQMASK) >= (lp->lwp_priority & ~PPQMASK))
-			goto found;
-		mask &= ~CPUMASK(cpuid);
+			if ((dd->upri & ~PPQMASK) >= (lp->lwp_priority & ~PPQMASK))
+				goto found;
+			mask &= ~CPUMASK(cpuid);
+		
+		}
 	}
 
 	/*
@@ -759,8 +759,7 @@ bsd4_setrunqueue(struct lwp *lp)
 			goto found;
 		mask &= ~CPUMASK(cpuid);
 	}
-//	}
-	
+
 	/*
 	 * If we cannot find a suitable cpu we reload from bsd4_scancpu
 	 * and round-robin.  Other cpus will pickup as they release their
@@ -1420,7 +1419,7 @@ chooseproc_locked(struct lwp *chklp)
 	idqbits = bsd4_idqueuebits;
 	cpumask = mycpu->gd_cpumask;
 	
-	cpumask_t siblings = bsd4_pcpu[mycpu->gd_cpuid].cpunode->members;
+//	cpumask_t siblings = bsd4_pcpu[mycpu->gd_cpuid].cpunode->members;
 
 #ifdef SMP
 again:
