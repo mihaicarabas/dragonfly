@@ -705,6 +705,7 @@ bsd4_setrunqueue(struct lwp *lp)
 					if (min_prio > bsd4_pcpu[sibling].upri) {
 						min_prio = bsd4_pcpu[sibling].upri;
 						best_cpuid = cpuid;
+						mask &= dd->cpunode->parent_node->parent_node->members;
 					}
 				}
 			}
