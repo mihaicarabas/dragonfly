@@ -218,7 +218,7 @@ KTR_INFO(KTR_USCHED_BSD4, usched, bsd4_acquire_curproc_urw, 0,
     pid_t pid, int cpuid, int curr);
 KTR_INFO(KTR_USCHED_BSD4, usched, bsd4_acquire_curproc_before_loop, 0,
     "USCHED_BSD4(bsd4_acquire_curproc before loop: pid %d, cpuid %d, "
-    "curr_cpuid%d)",
+    "curr_cpuid %d)",
     pid_t pid, int cpuid, int curr);
 KTR_INFO(KTR_USCHED_BSD4, usched, bsd4_acquire_curproc_not, 0,
     "USCHED_BSD4(bsd4_acquire_curproc couldn't acquire after "
