@@ -68,6 +68,8 @@ static struct sysctl_oid *cpu_topology_sysctl_tree;
 static char cpu_topology_members[8*MAXCPU];
 static per_cpu_sysctl_info_t pcpu_sysctl[MAXCPU];
 
+int cpu_topology_levels_number = 1;
+
 /* Get the next valid apicid starting
  * from current apicid (curr_apicid
  */
@@ -200,7 +202,9 @@ build_cpu_topology(void)
 		    root,
 		    &last_free_node,
 		    &apicid);
-	
+
+		cpu_topology_levels_number = 4;
+
 	} else if (cores_per_chip > 1) { /* No HT available - 3 levels */
 
 		children_no_per_level[0] = chips_per_package;
@@ -217,6 +221,9 @@ build_cpu_topology(void)
 		    root,
 		    &last_free_node,
 		    &apicid);
+
+		cpu_topology_levels_number = 3;
+
 	} else { /* No HT and no Multi-Core - 2 levels */
 
 		children_no_per_level[0] = chips_per_package;
@@ -231,6 +238,9 @@ build_cpu_topology(void)
 		    root,
 		    &last_free_node,
 		    &apicid);
+
+		cpu_topology_levels_number = 2;
+
 	}
 
 	return root;
@@ -302,6 +312,35 @@ print_cpu_topology_tree_sysctl(SYSCTL_HANDLER_ARGS)
 	}
 	sbuf_printf(sb,"\n");
 	print_cpu_topology_tree_sysctl_helper(cpu_root_node, sb, buf, 0, 1);
+
+	sbuf_finish(sb);
+
+	ret = SYSCTL_OUT(req, sbuf_data(sb), sbuf_len(sb));
+
+	sbuf_delete(sb);
+
+	return ret;
+}
+
+/* SYSCTL PROCEDURE for printing the CPU Topology level description */
+static int
+print_cpu_topology_level_description_sysctl(SYSCTL_HANDLER_ARGS)
+{
+	struct sbuf *sb;
+	int ret;
+
+	sb = sbuf_new(NULL, NULL, 500, SBUF_AUTOEXTEND);
+	if (sb == NULL)
+		return (ENOMEM);
+
+	if (cpu_topology_levels_number == 4) /* HT available */
+		sbuf_printf(sb, "0 - thread; 1 - core; 2 - socket; 3 - anything");
+	else if (cpu_topology_levels_number == 3) /* No HT available */
+		sbuf_printf(sb, "0 - core; 1 - socket; 2 - anything");
+	else if (cpu_topology_levels_number == 2) /* No HT and no Multi-Core */
+		sbuf_printf(sb, "0 - socket; 1 - anything");
+	else
+		sbuf_printf(sb, "Unknown");
 
 	sbuf_finish(sb);
 
@@ -417,7 +456,7 @@ init_pcpu_topology_sysctl(void)
 		sbuf_trim(&sb);
 		sbuf_finish(&sb);
 
-		pcpu_sysctl[i].core_id = get_core_number_within_chip(i); 
+		pcpu_sysctl[i].core_id = get_core_number_within_chip(i);
 
 	}
 }
@@ -432,7 +471,7 @@ build_sysctl_cpu_topology(void)
 	struct sbuf sb;
 	
 	/* SYSCTL new leaf for "cpu_topology" */
-	sysctl_ctx_init(&cpu_topology_sysctl_ctx); 
+	sysctl_ctx_init(&cpu_topology_sysctl_ctx);
 	cpu_topology_sysctl_tree = SYSCTL_ADD_NODE(&cpu_topology_sysctl_ctx,
 	    SYSCTL_STATIC_CHILDREN(_hw),
 	    OID_AUTO,
@@ -445,6 +484,13 @@ build_sysctl_cpu_topology(void)
 	    OID_AUTO, "tree", CTLTYPE_STRING | CTLFLAG_RD,
 	    NULL, 0, print_cpu_topology_tree_sysctl, "A",
 	    "Tree print of CPU topology");
+
+	/* SYSCTL cpu_topology "level_description" entry */
+	SYSCTL_ADD_PROC(&cpu_topology_sysctl_ctx,
+	    SYSCTL_CHILDREN(cpu_topology_sysctl_tree),
+	    OID_AUTO, "level_description", CTLTYPE_STRING | CTLFLAG_RD,
+	    NULL, 0, print_cpu_topology_level_description_sysctl, "A",
+	    "Level description of CPU topology");
 
 	/* SYSCTL cpu_topology "members" entry */
 	sbuf_new(&sb, cpu_topology_members,
@@ -460,7 +506,7 @@ build_sysctl_cpu_topology(void)
 	    cpu_topology_members, 0,
 	    "Members of the CPU Topology");
 
-	/* SYSCTL per_cpu info */	
+	/* SYSCTL per_cpu info */
 	for (i = 0; i < ncpus; i++) {
 		/* New leaf : hw.cpu_topology.cpux */
 		sysctl_ctx_init(&pcpu_sysctl[i].sysctl_ctx); 

@@ -199,6 +199,7 @@ static int usched_bsd4_smt = 0;
 static int usched_bsd4_cache_coherent = 0;
 static int usched_bsd4_upri_affinity = 1;
 static int usched_bsd4_queue_checks = 5;
+static int usched_bsd4_stick_to_level = 0;
 #endif
 static int usched_bsd4_rrinterval = (ESTCPUFREQ + 9) / 10;
 static int usched_bsd4_decay = 8;
@@ -1401,33 +1402,43 @@ struct lwp *
 chooseproc_locked_cache_coherent(struct lwp *chklp)
 {
 	struct lwp *lp;
-	struct lwp * min_level_lwp = NULL;
 	struct rq *q;
-	struct rq *min_q = NULL;
 	u_int32_t *which, *which2;
 	u_int32_t pri;
 	u_int32_t checks;
 	u_int32_t rtqbits;
 	u_int32_t tsqbits;
 	u_int32_t idqbits;
+	cpumask_t cpumask;
+
+#ifdef SMP
+	struct lwp * min_level_lwp = NULL;
+	struct rq *min_q = NULL;
+	cpumask_t siblings;
+	cpu_node_t* cpunode = NULL;
 	u_int32_t min_level = MAXCPU;	/* number of levels < MAXCPU */
 	u_int32_t *min_which = NULL;
 	u_int32_t min_pri = 0;
 	u_int32_t level = 0;
-	cpumask_t cpumask;
-	cpumask_t siblings;
-	cpu_node_t* cpunode = NULL;
+#endif
 
 	rtqbits = bsd4_rtqueuebits;
 	tsqbits = bsd4_queuebits;
 	idqbits = bsd4_idqueuebits;
 	cpumask = mycpu->gd_cpumask;
 
-/*	if (usched_bsd4_smt)
-			siblings = bsd4_pcpu[mycpu->gd_cpuid].cpunode->parent_node->members;
-	else */
-		siblings = bsd4_pcpu[mycpu->gd_cpuid].cpunode->members;
-	
+#ifdef SMP
+	/* Get the mask coresponding to the sysctl configured level */
+	cpunode = bsd4_pcpu[mycpu->gd_cpuid].cpunode;
+	level = usched_bsd4_stick_to_level;
+	while (level) {
+		cpunode = cpunode->parent_node;
+		level--;
+	}
+	/* The cpus which can ellect a process */
+	siblings = cpunode->members;
+#endif
+
 #ifdef SMP
 again:
 #endif
@@ -1799,6 +1810,24 @@ sched_thread(void *dummy)
     }
 }
 
+/* sysctl stick_to_level parameter */
+static int
+sysctl_usched_bsd4_stick_to_level(SYSCTL_HANDLER_ARGS)
+{
+	int error, new_val;
+
+	new_val = usched_bsd4_stick_to_level;
+
+	error = sysctl_handle_int(oidp, &new_val, 0, req);
+        if (error != 0 || req->newptr == NULL)
+		return (error);
+	if (new_val > cpu_topology_levels_number - 1 ||
+	    new_val < 0)
+		return (EINVAL);
+	usched_bsd4_stick_to_level = new_val;
+	return (0);
+}
+
 /*
  * Setup our scheduler helpers.  Note that curprocmask bit 0 has already
  * been cleared by rqinit() and we should not mess with it further.
@@ -1944,11 +1973,17 @@ sched_thread_cpu_init(void)
 		    &usched_bsd4_queue_checks, 5,
 		    "Number of LWP to check from a queue before giving up");
 
+		SYSCTL_ADD_PROC(&usched_bsd4_sysctl_ctx,
+		    SYSCTL_CHILDREN(usched_bsd4_sysctl_tree),
+		    OID_AUTO, "stick_to_level", CTLTYPE_INT | CTLFLAG_RW,
+		    NULL, sizeof usched_bsd4_stick_to_level,
+		    sysctl_usched_bsd4_stick_to_level, "I",
+		    "Stick a process to this level. See sysctl"
+		    "paremter hw.cpu_topology.level_description");
 	}
 }
 SYSINIT(uschedtd, SI_BOOT2_USCHED, SI_ORDER_SECOND,
 	sched_thread_cpu_init, NULL)
-
 #else /* No SMP options - just add the configurable parameters to sysctl */
 
 static void
@@ -1972,7 +2007,6 @@ sched_sysctl_tree_init(void)
 	    SYSCTL_CHILDREN(usched_bsd4_sysctl_tree),
 	    OID_AUTO, "batch_time", CTLFLAG_RW,
 	    &usched_bsd4_batch_time, 0, "Minimum batch counter value");
-
 }
 SYSINIT(uschedtd, SI_BOOT2_USCHED, SI_ORDER_SECOND,
 	sched_sysctl_tree_init, NULL)

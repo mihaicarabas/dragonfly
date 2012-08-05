@@ -13,6 +13,8 @@ struct cpu_node {
 };
 typedef struct cpu_node cpu_node_t;
 
+extern int cpu_topology_levels_number;
+
 cpumask_t get_cpumask_from_level(int cpuid,
 			uint8_t level_type);
 
