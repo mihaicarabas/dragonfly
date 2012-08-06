@@ -176,9 +176,13 @@ static int usched_optimal;
 SYSCTL_INT(_debug, OID_AUTO, usched_optimal, CTLFLAG_RW,
         &usched_optimal, 0, "acquire_curproc() was optimal");
 #endif
+
 static int usched_bsd4_debug = -1;
 SYSCTL_INT(_debug, OID_AUTO, scdebug, CTLFLAG_RW, &usched_bsd4_debug, 0,
     "Print debug information for this pid");
+static int usched_bsd4_pid_debug = -1;
+SYSCTL_INT(_debug, OID_AUTO, pid_debug, CTLFLAG_RW, &usched_bsd4_pid_debug, 0,
+    "Print KTR debug information for this pid");
 
 #ifdef SMP
 static int remote_resched_nonaffinity;
@@ -360,7 +364,8 @@ bsd4_acquire_curproc(struct lwp *lp)
 		clear_user_resched();
 		bsd4_release_curproc(lp);
 
-		KTR_LOG(usched_bsd4_acquire_curproc_urw,
+		KTR_COND_LOG(usched_bsd4_acquire_curproc_urw,
+		    lp->lwp_proc->p_pid == usched_bsd4_pid_debug,
 		    lp->lwp_proc->p_pid,
 		    lp->lwp_thread->td_gd->gd_cpuid,
 		    mycpu->gd_cpuid);
@@ -372,7 +377,8 @@ bsd4_acquire_curproc(struct lwp *lp)
 	gd = mycpu;
 	dd = &bsd4_pcpu[gd->gd_cpuid];
 
-	KTR_LOG(usched_bsd4_acquire_curproc_before_loop,
+	KTR_COND_LOG(usched_bsd4_acquire_curproc_before_loop,
+	    lp->lwp_proc->p_pid == usched_bsd4_pid_debug,
 	    lp->lwp_proc->p_pid,
 	    lp->lwp_thread->td_gd->gd_cpuid,
 	    gd->gd_cpuid);
@@ -427,7 +433,8 @@ bsd4_acquire_curproc(struct lwp *lp)
 
 			bsd4_setrunqueue(lp);
 			
-			KTR_LOG(usched_bsd4_acquire_curproc_not,
+			KTR_COND_LOG(usched_bsd4_acquire_curproc_not,
+			    lp->lwp_proc->p_pid == usched_bsd4_pid_debug,
 			    lp->lwp_proc->p_pid,
 			    lp->lwp_thread->td_gd->gd_cpuid,
 			    dd->uschedcp->lwp_proc->p_pid,
@@ -443,7 +450,8 @@ bsd4_acquire_curproc(struct lwp *lp)
 			gd = mycpu;
 			dd = &bsd4_pcpu[gd->gd_cpuid];
 
-			KTR_LOG(usched_bsd4_acquire_curproc_switch,
+			KTR_COND_LOG(usched_bsd4_acquire_curproc_switch,
+			    lp->lwp_proc->p_pid == usched_bsd4_pid_debug,
 			    lp->lwp_proc->p_pid,
 			    lp->lwp_thread->td_gd->gd_cpuid,
 			    gd->gd_cpuid);
@@ -485,7 +493,8 @@ bsd4_release_curproc(struct lwp *lp)
 		crit_enter();
 		KKASSERT((lp->lwp_mpflags & LWP_MP_ONRUNQ) == 0);
 
-		KTR_LOG(usched_bsd4_release_curproc,
+		KTR_COND_LOG(usched_bsd4_release_curproc,
+		    lp->lwp_proc->p_pid == usched_bsd4_pid_debug,
 		    lp->lwp_proc->p_pid,
 		    lp->lwp_thread->td_gd->gd_cpuid,
 		    gd->gd_cpuid);
@@ -532,7 +541,8 @@ bsd4_select_curproc(globaldata_t gd)
 		
 	if (nlp) {
 
-		KTR_LOG(usched_bsd4_select_curproc,
+		KTR_COND_LOG(usched_bsd4_select_curproc,
+		    nlp->lwp_proc->p_pid == usched_bsd4_pid_debug,
 		    nlp->lwp_proc->p_pid,
 		    nlp->lwp_thread->td_gd->gd_cpuid,
 		    dd->old_uschedcp->lwp_proc->p_pid,
@@ -575,13 +585,16 @@ batchy_looser_pri_test(struct lwp* lp)
 	bsd4_pcpu_t other_dd;
 	int cpu;
 
-	mask = bsd4_curprocmask;	/* current running processes */
+	/* Current running processes */
+	mask = bsd4_curprocmask & bsd4_rdyprocmask &
+	       lp->lwp_cpumask & smp_active_mask & usched_global_cpumask;
 
 	CPUSET_FOREACH(cpu, mask) {
 		other_dd = &bsd4_pcpu[cpu];
 		if (other_dd->upri - lp->lwp_priority > usched_bsd4_upri_affinity * PPQ) {
 
-		KTR_LOG(usched_batchy_test_false,
+		KTR_COND_LOG(usched_batchy_test_false,
+		    lp->lwp_proc->p_pid == usched_bsd4_pid_debug,
 		    lp->lwp_proc->p_pid,
 		    lp->lwp_thread->td_gd->gd_cpuid,
 		    mask);
@@ -590,7 +603,8 @@ batchy_looser_pri_test(struct lwp* lp)
 		}
 	}
 
-	KTR_LOG(usched_batchy_test_true,
+	KTR_COND_LOG(usched_batchy_test_true,
+	    lp->lwp_proc->p_pid == usched_bsd4_pid_debug,
 	    lp->lwp_proc->p_pid,
 	    lp->lwp_thread->td_gd->gd_cpuid,
 	    mask);
@@ -715,7 +729,8 @@ bsd4_setrunqueue(struct lwp *lp)
 		mask = ~bsd4_curprocmask & bsd4_rdyprocmask & lp->lwp_cpumask &
 		    smp_active_mask & usched_global_cpumask;
 
-		KTR_LOG(usched_bsd4_setrunqueue_fc_smt,
+		KTR_COND_LOG(usched_bsd4_setrunqueue_fc_smt,
+		    lp->lwp_proc->p_pid == usched_bsd4_pid_debug,
 		    lp->lwp_proc->p_pid,
 		    lp->lwp_thread->td_gd->gd_cpuid,
 		    mask,
@@ -733,7 +748,8 @@ bsd4_setrunqueue(struct lwp *lp)
 			if ((dd->upri & ~PPQMASK) >= (lp->lwp_priority & ~PPQMASK)) {
 				if (dd->cpunode->parent_node->members & ~dd->cpunode->members & mask) {
 
-					KTR_LOG(usched_bsd4_setrunqueue_found,
+					KTR_COND_LOG(usched_bsd4_setrunqueue_found,
+					    lp->lwp_proc->p_pid == usched_bsd4_pid_debug,
 					    lp->lwp_proc->p_pid,
 					    lp->lwp_thread->td_gd->gd_cpuid,
 					    mask,
@@ -758,7 +774,8 @@ bsd4_setrunqueue(struct lwp *lp)
 			gd = globaldata_find(cpuid);
 			dd = &bsd4_pcpu[cpuid];
 			
-			KTR_LOG(usched_bsd4_setrunqueue_found_best_cpuid,
+			KTR_COND_LOG(usched_bsd4_setrunqueue_found_best_cpuid,
+			    lp->lwp_proc->p_pid == usched_bsd4_pid_debug,
 			    lp->lwp_proc->p_pid,
 			    lp->lwp_thread->td_gd->gd_cpuid,
 			    mask,
@@ -773,7 +790,8 @@ bsd4_setrunqueue(struct lwp *lp)
 		mask = ~bsd4_curprocmask & bsd4_rdyprocmask & lp->lwp_cpumask &
 		       smp_active_mask & usched_global_cpumask;
 
-		KTR_LOG(usched_bsd4_setrunqueue_fc_non_smt,
+		KTR_COND_LOG(usched_bsd4_setrunqueue_fc_non_smt,
+		    lp->lwp_proc->p_pid == usched_bsd4_pid_debug,
 		    lp->lwp_proc->p_pid,
 		    lp->lwp_thread->td_gd->gd_cpuid,
 		    mask,
@@ -790,7 +808,8 @@ bsd4_setrunqueue(struct lwp *lp)
 
 			if ((dd->upri & ~PPQMASK) >= (lp->lwp_priority & ~PPQMASK)) {
 
-				KTR_LOG(usched_bsd4_setrunqueue_found,
+				KTR_COND_LOG(usched_bsd4_setrunqueue_found,
+				    lp->lwp_proc->p_pid == usched_bsd4_pid_debug,
 				    lp->lwp_proc->p_pid,
 				    lp->lwp_thread->td_gd->gd_cpuid,
 				    mask,
@@ -810,7 +829,8 @@ bsd4_setrunqueue(struct lwp *lp)
 	mask = bsd4_curprocmask & bsd4_rdyprocmask &
 	       lp->lwp_cpumask & smp_active_mask & usched_global_cpumask;
 
-	KTR_LOG(usched_bsd4_setrunqueue_rc,
+	KTR_COND_LOG(usched_bsd4_setrunqueue_rc,
+	    lp->lwp_proc->p_pid == usched_bsd4_pid_debug,
 	    lp->lwp_proc->p_pid,
 	    lp->lwp_thread->td_gd->gd_cpuid,
 	    mask,
@@ -827,7 +847,8 @@ bsd4_setrunqueue(struct lwp *lp)
 
 		if ((dd->upri & ~PPQMASK) > (lp->lwp_priority & ~PPQMASK)) {
 
-			KTR_LOG(usched_bsd4_setrunqueue_found,
+			KTR_COND_LOG(usched_bsd4_setrunqueue_found,
+			    lp->lwp_proc->p_pid == usched_bsd4_pid_debug,
 			    lp->lwp_proc->p_pid,
 			    lp->lwp_thread->td_gd->gd_cpuid,
 			    mask,
@@ -857,7 +878,8 @@ bsd4_setrunqueue(struct lwp *lp)
 	gd = globaldata_find(cpuid);
 	dd = &bsd4_pcpu[cpuid];
 
-	KTR_LOG(usched_bsd4_setrunqueue_not_found,
+	KTR_COND_LOG(usched_bsd4_setrunqueue_not_found,
+	    lp->lwp_proc->p_pid == usched_bsd4_pid_debug,
 	    lp->lwp_proc->p_pid,
 	    lp->lwp_thread->td_gd->gd_cpuid,
 	    cpuid,
@@ -1375,7 +1397,8 @@ again:
 	}
 #endif
 
-	KTR_LOG(usched_chooseproc,
+	KTR_COND_LOG(usched_chooseproc,
+	    lp->lwp_proc->p_pid == usched_bsd4_pid_debug,
 	    lp->lwp_proc->p_pid,
 	    lp->lwp_thread->td_gd->gd_cpuid,
 	    mycpu->gd_cpuid);
@@ -1475,7 +1498,8 @@ again:
 		      (lp->lwp_setrunqueue_ticks == sched_ticks ||
 		       lp->lwp_setrunqueue_ticks == (int)(sched_ticks - 1)))) {
 
-			KTR_LOG(usched_chooseproc_cc_not_good,
+			KTR_COND_LOG(usched_chooseproc_cc_not_good,
+			    lp->lwp_proc->p_pid == usched_bsd4_pid_debug,
 			    lp->lwp_proc->p_pid,
 			    lp->lwp_thread->td_gd->gd_cpumask,
 			    siblings,
@@ -1504,7 +1528,8 @@ again:
 				goto again;
 			}
 		} else {
-			KTR_LOG(usched_chooseproc_cc_ellected,
+			KTR_COND_LOG(usched_chooseproc_cc_ellected,
+			    lp->lwp_proc->p_pid == usched_bsd4_pid_debug,
 			    lp->lwp_proc->p_pid,
 			    lp->lwp_thread->td_gd->gd_cpumask,
 			    siblings,
@@ -1534,7 +1559,8 @@ found:
 			return(NULL);
 	}
 
-	KTR_LOG(usched_chooseproc_cc,
+	KTR_COND_LOG(usched_chooseproc_cc,
+	    lp->lwp_proc->p_pid == usched_bsd4_pid_debug,
 	    lp->lwp_proc->p_pid,
 	    lp->lwp_thread->td_gd->gd_cpuid,
 	    mycpu->gd_cpuid);
@@ -1732,7 +1758,8 @@ sched_thread(void *dummy)
 		KKASSERT(dd->uschedcp == NULL);
 		if ((nlp = chooseproc_locked(NULL)) != NULL) {
 
-			KTR_LOG(usched_sched_thread_no_process,
+			KTR_COND_LOG(usched_sched_thread_no_process,
+			    nlp->lwp_proc->p_pid == usched_bsd4_pid_debug,
 			    gd->gd_cpuid,
 			    nlp->lwp_proc->p_pid,
 			    nlp->lwp_thread->td_gd->gd_cpuid);
@@ -1751,7 +1778,8 @@ sched_thread(void *dummy)
 	} else if (bsd4_runqcount) {
 		if ((nlp = chooseproc_locked(dd->uschedcp)) != NULL) {
 
-			KTR_LOG(usched_sched_thread_process,
+			KTR_COND_LOG(usched_sched_thread_process,
+			    nlp->lwp_proc->p_pid == usched_bsd4_pid_debug,
 			    gd->gd_cpuid,
 			    nlp->lwp_proc->p_pid,
 			    nlp->lwp_thread->td_gd->gd_cpuid);
