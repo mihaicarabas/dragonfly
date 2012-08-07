@@ -586,8 +586,8 @@ batchy_looser_pri_test(struct lwp* lp)
 	int cpu;
 
 	/* Current running processes */
-	mask = bsd4_curprocmask & bsd4_rdyprocmask &
-	       lp->lwp_cpumask & smp_active_mask & usched_global_cpumask;
+	mask = bsd4_curprocmask & smp_active_mask
+	    & usched_global_cpumask;
 
 	CPUSET_FOREACH(cpu, mask) {
 		other_dd = &bsd4_pcpu[cpu];
