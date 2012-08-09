@@ -184,16 +184,11 @@ static void ktr_resync_callback(void *dummy __unused);
 
 extern int64_t tsc_offsets[];
 
-#ifdef KTR_GLOBAL_TIMESTAMP
-static u_long global_timestamp;
-#endif
-
 static void
 ktr_sysinit(void *dummy)
 {
 	struct ktr_cpu_core *kcpu;
 	int i;
-
 	for(i = 1; i < ncpus; ++i) {
 		kcpu = &ktr_cpu[i].core;
 		kcpu->ktr_buf = kmalloc(KTR_ENTRIES * sizeof(struct ktr_entry),
@@ -201,7 +196,6 @@ ktr_sysinit(void *dummy)
 	}
 	callout_init_mp(&ktr_resync_callout);
 	callout_reset(&ktr_resync_callout, hz / 10, ktr_resync_callback, NULL);
-	global_timestamp = 0;
 }
 SYSINIT(ktr_sysinit, SI_BOOT2_KLD, SI_ORDER_ANY, ktr_sysinit, NULL);
 
@@ -421,18 +415,27 @@ ktr_begin_write_entry(struct ktr_info *info, const char *file, int line)
 	struct ktr_cpu_core *kcpu;
 	struct ktr_entry *entry;
 	int cpu;
+	int index;
 
+#ifdef KTR_GLOBAL_BUFFER
+	cpu = 0;
+#else
 	cpu = mycpu->gd_cpuid;
+#endif
+
 	kcpu = &ktr_cpu[cpu].core;
 	if (kcpu->ktr_buf == NULL)
 		return NULL;
 
 	crit_enter();
-	entry = kcpu->ktr_buf + (kcpu->ktr_idx & KTR_ENTRIES_MASK);
-	++kcpu->ktr_idx;
-#ifdef KTR_GLOBAL_TIMESTAMP
-	entry->ktr_timestamp = (u_int64_t) atomic_fetchadd_long(&global_timestamp, 1);
+
+#ifdef KTR_GLOBAL_BUFFER
+	index = atomic_fetchadd_int(&kcpu->ktr_idx, 1);
 #else
+	index = kcpu->ktr_idx;
+	kcpu->ktr_idx++;
+#endif
+	entry = kcpu->ktr_buf + (index & KTR_ENTRIES_MASK);
 
 #ifdef _RDTSC_SUPPORTED_
 	if (cpu_feature & CPUID_TSC) {
@@ -446,10 +449,11 @@ ktr_begin_write_entry(struct ktr_info *info, const char *file, int line)
 	{
 		entry->ktr_timestamp = get_approximate_time_t();
 	}
-#endif
+	
 	entry->ktr_info = info;
 	entry->ktr_file = file;
 	entry->ktr_line = line;
+	entry->ktr_cpu = mycpu->gd_cpuid;
 	crit_exit();
 	return entry;
 }

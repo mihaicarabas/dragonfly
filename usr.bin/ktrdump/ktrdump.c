@@ -455,8 +455,10 @@ print_entry(FILE *fo, int n, int row, struct ktr_entry *entry,
 	static struct save_ctx nctx, pctx, fmtctx, symctx, infoctx;
 
 	fprintf(fo, " %06x ", row & 0x00FFFFFF);
-	if (cflag)
+	if (cflag) {
+		n = entry->ktr_cpu;
 		fprintf(fo, "%-3d ", n);
+	}
 	if (tflag || rflag) {
 		if (rflag && !nflag && tsc_frequency != 0.0) {
 			fprintf(fo, "%13.3f uS ",

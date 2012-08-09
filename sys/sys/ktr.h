@@ -82,7 +82,7 @@ struct ktr_entry {
 	void	*ktr_caller1;
 	void	*ktr_caller2;
 	int32_t	ktr_line;
-	int32_t ktr_unused;
+	int32_t ktr_cpu;
 	int32_t	ktr_data[KTR_BUFSIZE / sizeof(int32_t)];
 };
 
