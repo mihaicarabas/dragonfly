@@ -32,7 +32,7 @@ get_cpu_node_by_cpuid(int cpuid);
 #define	CPU_ISSET(n, p)	((CPUMASK(n) & p) != 0)
 
 #define CPUSET_FOREACH(cpu, mask)			\
-	for ((cpu) = 0; (cpu) < ncpus; (cpu)++)	\
+	for ((cpu) = 0; (cpu) < ncpus; (cpu)++)		\
 		if (CPU_ISSET(cpu, mask))
 
 
