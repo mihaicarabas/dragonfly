@@ -589,18 +589,20 @@ batchy_looser_pri_test(struct lwp* lp)
 	mask = bsd4_curprocmask & smp_active_mask
 	    & usched_global_cpumask;
 
-	CPUSET_FOREACH(cpu, mask) {
+	while(mask) {
+		cpu = BSFCPUMASK(mask);
 		other_dd = &bsd4_pcpu[cpu];
 		if (other_dd->upri - lp->lwp_priority > usched_bsd4_upri_affinity * PPQ) {
 
-		KTR_COND_LOG(usched_batchy_test_false,
-		    lp->lwp_proc->p_pid == usched_bsd4_pid_debug,
-		    lp->lwp_proc->p_pid,
-		    lp->lwp_thread->td_gd->gd_cpuid,
-		    mask);
+			KTR_COND_LOG(usched_batchy_test_false,
+			    lp->lwp_proc->p_pid == usched_bsd4_pid_debug,
+			    lp->lwp_proc->p_pid,
+			    lp->lwp_thread->td_gd->gd_cpuid,
+			    mask);
 
 			return 0;
 		}
+		mask &= ~CPUMASK(cpu);
 	}
 
 	KTR_COND_LOG(usched_batchy_test_true,
