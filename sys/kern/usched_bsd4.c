@@ -201,7 +201,7 @@ SYSCTL_INT(_debug, OID_AUTO, choose_affinity, CTLFLAG_RD,
 #ifdef SMP
 static int usched_bsd4_smt = 0;
 static int usched_bsd4_cache_coherent = 0;
-static int usched_bsd4_upri_affinity = 1;
+static int usched_bsd4_upri_affinity = 16; /* 32 queues - half-way */
 static int usched_bsd4_queue_checks = 5;
 static int usched_bsd4_stick_to_level = 0;
 #endif
