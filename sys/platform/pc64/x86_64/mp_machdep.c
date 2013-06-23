@@ -70,6 +70,8 @@
 #include <machine_base/apic/ioapic_abi.h>
 #include <machine/intr_machdep.h>	/* IPIs */
 
+#include <machine/vmm.h>
+
 #define WARMBOOT_TARGET		0
 #define WARMBOOT_OFF		(KERNBASE + 0x0467)
 #define WARMBOOT_SEG		(KERNBASE + 0x0469)
@@ -1080,6 +1082,11 @@ ap_finish(void)
 		kprintf("Active CPU Mask: %016jx\n",
 			(uintmax_t)smp_active_mask);
 	}
+
+	/* Initialize VMM */
+	if (vmm_init()) {
+		kprintf("vmm_init error\n");
+	}
 }
 
 SYSINIT(finishsmp, SI_BOOT2_FINISH_SMP, SI_ORDER_FIRST, ap_finish, NULL)
@@ -1297,3 +1304,4 @@ get_logical_CPU_number_within_core(int cpuid)
 	return get_apicid_from_cpuid(cpuid) &
 	    ( (1 << logical_CPU_bits) -1);
 }
+
