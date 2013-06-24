@@ -1,7 +1,10 @@
 #ifndef _VMM_VMM_H_
 #define _VMM_VMM_H_
 
+#define MAX_NAME_LEN 256
+
 struct vmm_ctl {
+	char name[MAX_NAME_LEN];
 	int (*init)(void);
 	int (*clean)(void);
 };
