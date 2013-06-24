@@ -299,8 +299,9 @@ vmx_clean(void)
 }
 
 static struct vmm_ctl ctl_vmx = {
-	vmx_init,
-	vmx_clean
+	.name = "VMX from Intel",
+	.init = vmx_init,
+	.clean = vmx_clean,
 };
 
 struct vmm_ctl*

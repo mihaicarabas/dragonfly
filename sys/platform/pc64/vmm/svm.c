@@ -18,8 +18,9 @@ svm_clean(void)
 
 
 static struct vmm_ctl ctl_svm = {
-	svm_init,
-	svm_clean
+	.name = "SVM from AMD",
+	.init = svm_init,
+	.clean = svm_clean,
 };
 
 struct vmm_ctl*
