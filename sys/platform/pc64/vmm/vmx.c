@@ -90,9 +90,11 @@ vmx_set_ctl_setting(struct vmx_ctl_info *vmx_ctl, uint32_t bit_no, setting_t val
 			} else if (IS_ZERO_SETTING_ALLOWED(ctl_val, bit_no)) {
 				/* b.i), c.i) */
 				vmx_ctl->ctls |= ~BIT(bit_no);
+
 			} else if (IS_ONE_SETTING_ALLOWED(ctl_val, bit_no)) {
 				/* b.i), c.i) */
 				vmx_ctl->ctls &= BIT(bit_no);
+
 			} else {
 				return (EINVAL);
 			}
@@ -107,7 +109,7 @@ vmx_set_ctl_setting(struct vmx_ctl_info *vmx_ctl, uint32_t bit_no, setting_t val
 			break;
 		case ONE:
 			/* For b.ii) or c.ii) */
-			if (IS_ONE_SETTING_ALLOWED(ctl_val, bit_no))
+			if (!IS_ONE_SETTING_ALLOWED(ctl_val, bit_no))
 				return (EINVAL);
 
 			vmx_ctl->ctls &= BIT(bit_no);
