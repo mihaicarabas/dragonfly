@@ -6,7 +6,9 @@
 struct vmm_ctl {
 	char name[MAX_NAME_LEN];
 	int (*init)(void);
-	int (*clean)(void);
+	int (*enable)(void);
+	int (*disable)(void);
+
 };
 
 struct vmm_ctl* get_ctl_intel(void);

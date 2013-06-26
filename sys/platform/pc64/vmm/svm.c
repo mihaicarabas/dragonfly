@@ -5,14 +5,21 @@
 static int
 svm_init(void)
 {
-	kprintf("Operation not supported\n");
+	kprintf("VMM: SVM not supported\n");
 	return (ENODEV);
 }
 
 static int
-svm_clean(void)
+svm_enable(void)
 {
-	kprintf("Operation not supported\n");
+	kprintf("VMM: SVM not supported\n");
+	return (ENODEV);
+}
+
+static int
+svm_disable(void)
+{
+	kprintf("VMM: SVM not supported\n");
 	return (ENODEV);
 }
 
@@ -20,7 +27,8 @@ svm_clean(void)
 static struct vmm_ctl ctl_svm = {
 	.name = "SVM from AMD",
 	.init = svm_init,
-	.clean = svm_clean,
+	.enable = svm_enable,
+	.disable = svm_disable,
 };
 
 struct vmm_ctl*
