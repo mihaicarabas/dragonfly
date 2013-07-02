@@ -1,6 +1,6 @@
 #ifndef _MACHINE_VMM_H_
 #define _MACHINE_VMM_H_
 
-extern int vmm_enabled;
+#define vmm_enabled 0
 
 #endif

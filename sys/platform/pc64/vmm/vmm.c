@@ -4,7 +4,6 @@
 #include <sys/sysctl.h>
 
 #include <machine/cputypes.h>
-#include <machine/vmm.h>
 #include <machine/md_var.h>
 
 static struct vmm_ctl *ctl = NULL;
@@ -12,7 +11,7 @@ static struct vmm_ctl *ctl = NULL;
 struct sysctl_ctx_list vmm_sysctl_ctx;
 struct sysctl_oid *vmm_sysctl_tree;
 
-static int vmm_enabled;
+int vmm_enabled;
 
 static int
 sysctl_vmm_enable(SYSCTL_HANDLER_ARGS)
