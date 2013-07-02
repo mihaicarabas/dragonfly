@@ -2289,6 +2289,12 @@ struct	lpathconf_args {
 	char *	path;	char path_[PAD_(char *)];
 	int	name;	char name_[PAD_(int)];
 };
+struct	vmm_guest_ctl_args {
+#ifdef _KERNEL
+	struct sysmsg sysmsg;
+#endif
+	int	operation;	char operation_[PAD_(int)];
+};
 
 #ifdef COMPAT_43
 
@@ -2897,6 +2903,7 @@ int	sys_vquotactl (struct vquotactl_args *);
 int	sys_linkat (struct linkat_args *);
 int	sys_eaccess (struct eaccess_args *);
 int	sys_lpathconf (struct lpathconf_args *);
+int	sys_vmm_guest_ctl (struct vmm_guest_ctl_args *);
 
 #endif /* !_SYS_SYSPROTO_H_ */
 #undef PAD_

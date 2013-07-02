@@ -542,4 +542,5 @@ const char *syscallnames[] = {
 	"linkat",			/* 531 = linkat */
 	"eaccess",			/* 532 = eaccess */
 	"lpathconf",			/* 533 = lpathconf */
+	"vmm_guest_ctl",			/* 534 = vmm_guest_ctl */
 };
