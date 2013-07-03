@@ -12,14 +12,14 @@
 #define	VM_FAIL_INVALID		1
 #define	VM_FAIL_VALID		2
 #define	GET_ERROR_CODE				\
-	"check_CF:	jnc check_ZF;"		\
+	"		jnc 1f;"		\
 	"		mov $1, %[err];"	\
-	"		jmp ok;"		\
-	"check_ZF:	jnz ok;"		\
+	"		jmp 4f;"		\
+	"1:		jnz 3f;"		\
 	"		mov $2, %[err];"	\
-	"		jmp end;"		\
-	"ok:		mov $0, %[err];"	\
-	"end:"
+	"		jmp 4f;"		\
+	"3:		mov $0, %[err];"	\
+	"4:"
 
 static inline int
 vmxon(char *vmx_region)
@@ -42,6 +42,21 @@ vmxoff(void)
 {
 
 	__asm __volatile("vmxoff");
+}
+
+static inline int
+vmclear(char *vmcs_region)
+{
+	int err;
+	uint64_t paddr;
+
+	paddr = vtophys(vmcs_region);
+	__asm __volatile("vmclear %[paddr];"
+			 GET_ERROR_CODE
+			 : [err] "=r" (err)
+			 : [paddr] "m" (paddr)
+			 : "memory");
+	return err;
 }
 
 static inline void
