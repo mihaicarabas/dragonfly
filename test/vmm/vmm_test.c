@@ -21,14 +21,14 @@ main(void)
 	int enabl2 = 0;
 	sysctlnametomib("hw.vmm.enable", mib, &len);
 
+	error = vmm_guest_ctl(100);
+	vmm_printf(100, error, -1);
+
 	/* Disable vmm and make the vmm_guest syscall */
 	printf ("hw.vmm.enable = 0\n");
 	len = sizeof(int);
 	if (sysctl(mib, 3, &enabl2, &len, &enable, len) == -1)
 		perror("sysctl");
-
-	error = vmm_guest_ctl(100);
-	vmm_printf(100, error, -1);
 
 	error = vmm_guest_ctl(VMM_GUEST_INIT);
 	vmm_printf(VMM_GUEST_INIT, error, -1);
@@ -38,9 +38,6 @@ main(void)
 	enable = 1;
 	if (sysctl(mib, 3, NULL, NULL, &enable, sizeof(int)) == -1)
 		perror("sysctl");
-
-	error = vmm_guest_ctl(100);
-	vmm_printf(100, error, -1);
 
 	error = vmm_guest_ctl(VMM_GUEST_INIT);
 	vmm_printf(VMM_GUEST_INIT, error, 0);
