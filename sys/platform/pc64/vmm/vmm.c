@@ -3,6 +3,7 @@
 #include <sys/systm.h>
 #include <sys/sysctl.h>
 
+#include <machine/vmm.h>
 #include <machine/cputypes.h>
 #include <machine/md_var.h>
 
@@ -89,3 +90,13 @@ vmm_init(void)
 	}
 }
 SYSINIT(vmm, SI_BOOT2_CPU_TOPOLOGY, SI_ORDER_ANY, vmm_init, NULL)
+
+int
+vmm_vminit(void)
+{
+	if (!vmm_enabled) {
+		return ENODEV;
+	}
+
+	return ctl->vminit();
+}

@@ -384,11 +384,19 @@ vmx_disable(void)
 	return 0;
 }
 
+static int
+vmx_vminit(void)
+{
+	return 0;
+}
+
 static struct vmm_ctl ctl_vmx = {
 	.name = "VMX from Intel",
 	.init = vmx_init,
 	.enable = vmx_enable,
 	.disable = vmx_disable,
+	.vminit = vmx_vminit,
+
 };
 
 struct vmm_ctl*
