@@ -8,7 +8,7 @@ struct vmm_ctl {
 	int (*init)(void);
 	int (*enable)(void);
 	int (*disable)(void);
-
+	int (*vminit)(void);
 };
 
 struct vmm_ctl* get_ctl_intel(void);
