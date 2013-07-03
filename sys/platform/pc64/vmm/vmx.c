@@ -149,22 +149,20 @@ static void
 alloc_vmxon_regions(void)
 {
 	int cpu;
-	kprintf("VMM: alloc_vmxon_regions: ncpus: %d\n", ncpus);
 	pcpu_info = kmalloc(ncpus * sizeof(struct vmx_pcpu_info), M_TEMP, M_WAITOK | M_ZERO);
 
 	for (cpu = 0; cpu < ncpus; cpu++) {
 
 		/* The address must be aligned to 4K - alloc extra */
-		pcpu_info[cpu].vmxon_region = kmalloc(vmx_region_size + VMXON_REGION_ALIGN_SIZE,
+		pcpu_info[cpu].vmxon_region_na = kmalloc(vmx_region_size + VMXON_REGION_ALIGN_SIZE,
 		    M_TEMP,
 		    M_WAITOK | M_ZERO);
+
 		/* Align address */
-		pcpu_info[cpu].vmxon_region_aligned = (unsigned char*) VMXON_REGION_ALIGN(pcpu_info[cpu].vmxon_region);
-		kprintf("VMM: alloc_vmxon_regions: %lx %lx\n",(unsigned long)pcpu_info[cpu].vmxon_region, (unsigned long)pcpu_info[cpu].vmxon_region_aligned);
+		pcpu_info[cpu].vmxon_region = (unsigned char*) VMXON_REGION_ALIGN(pcpu_info[cpu].vmxon_region_na);
 
 		/* In the first 31 bits put the vmx revision*/
-		*((uint32_t *) pcpu_info[cpu].vmxon_region_aligned) = vmx_revision;
-		kprintf("VMM: alloc_vmxon_regions: %d\n",*((unsigned int *)pcpu_info[cpu].vmxon_region_aligned));
+		*((uint32_t *) pcpu_info[cpu].vmxon_region) = vmx_revision;
 	}
 }
 
@@ -174,9 +172,9 @@ free_vmxon_regions(void)
 	int i;
 
 	for (i = 0; i < ncpus; i++) {
-		pcpu_info[i].vmxon_region_aligned = NULL;
+		pcpu_info[i].vmxon_region = NULL;
 
-		kfree(pcpu_info[i].vmxon_region, M_TEMP);
+		kfree(pcpu_info[i].vmxon_region_na, M_TEMP);
 	}
 
 	kfree(pcpu_info, M_TEMP);
@@ -292,8 +290,6 @@ execute_vmxon(void *perr)
 	unsigned char *vmxon_region;
 	int *err = (int*) perr;
 
-	kprintf("VMM: cpu%d, cr4: %lu, %ld\n",mycpuid,rcr4(), sizeof(u_long));
-
 	/* A.7 VMX-FIXED BITS IN CR0 */
 	cr0_fixed_bits_to_1 = rdmsr(IA32_VMX_CR0_FIXED0);
 	cr0_fixed_bits_to_0 = rdmsr(IA32_VMX_CR0_FIXED1);
@@ -303,16 +299,11 @@ execute_vmxon(void *perr)
 	cr4_fixed_bits_to_1 = rdmsr(IA32_VMX_CR4_FIXED0);
 	cr4_fixed_bits_to_0 = rdmsr(IA32_VMX_CR4_FIXED1);
 	load_cr4(rcr4() | (cr4_fixed_bits_to_1 & cr4_fixed_bits_to_0));
-	kprintf("VMM: cpu%d cr0_fixed_bits_to_1 %llu, cr4_fixed_bits_to_1 %llu\n", mycpuid, (unsigned long long) cr0_fixed_bits_to_1, (unsigned long long)cr4_fixed_bits_to_1);
-	kprintf("VMM: cpu%d cr0_fixed_bits_to_0 %llu, cr4_fixed_bits_to_0 %llu\n", mycpuid, (unsigned long long) cr0_fixed_bits_to_0, (unsigned long long)cr4_fixed_bits_to_0);
-
-	kprintf("VMM: cpu%d CR4: %llu \n", mycpuid, (unsigned long long)rcr4());
 
 	/* Enable VMX */
 	load_cr4(rcr4() | CR4_VMXE);
-	kprintf("VMM: cpu%d CR4: %llu \n", mycpuid, (unsigned long long)rcr4());
 
-	vmxon_region = pcpu_info[mycpuid].vmxon_region_aligned;
+	vmxon_region = pcpu_info[mycpuid].vmxon_region;
 	*err = vmxon(vmxon_region);
 	if (*err) {
 		kprintf("VMM: vmxon failed on cpu%d\n", mycpuid);
@@ -387,7 +378,53 @@ vmx_disable(void)
 static int
 vmx_vminit(void)
 {
-	return 0;
+	struct vmx_thread_info * vti;
+	int err = 0;
+
+	vti = kmalloc(sizeof(struct vmx_thread_info), M_TEMP, M_WAITOK | M_ZERO);
+	vti->vmcs_region_na = kmalloc(vmx_region_size + VMXON_REGION_ALIGN_SIZE,
+		    M_TEMP,
+		    M_WAITOK | M_ZERO);
+
+	/* Align address */
+	vti->vmcs_region = (unsigned char*) VMXON_REGION_ALIGN(vti->vmcs_region_na);
+
+	/* In the first 31 bits put the vmx revision*/
+	*((uint32_t *)vti->vmcs_region) = vmx_revision;
+
+	/* vmclear the vmcs to initialize it */
+	err = vmclear(vti->vmcs_region);
+	if (err) {
+		kprintf("VMM: vmx_vminit: vmclear vmcs_region failed\n");
+		goto error;
+	}
+
+	curthread->td_vmm = (void*) vti;
+
+	goto out;
+error:
+	kfree(vti->vmcs_region_na, M_TEMP);
+	kfree(vti, M_TEMP);
+out:
+	return err;
+}
+
+static int
+vmx_vmdestroy(void)
+{
+	struct vmx_thread_info * vti = (struct vmx_thread_info *) curthread->td_vmm;
+
+	if (vti != NULL) {
+		if (vti->vmcs_region_na != NULL) {
+			kfree(vti->vmcs_region_na, M_TEMP);
+			kfree(vti, M_TEMP);
+
+			curthread->td_vmm = NULL;
+
+			return 0;
+		}
+	}
+	return -1;
 }
 
 static struct vmm_ctl ctl_vmx = {
@@ -396,6 +433,7 @@ static struct vmm_ctl ctl_vmx = {
 	.enable = vmx_enable,
 	.disable = vmx_disable,
 	.vminit = vmx_vminit,
+	.vmdestroy = vmx_vmdestroy,
 
 };
 

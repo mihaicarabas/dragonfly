@@ -23,8 +23,15 @@ svm_disable(void)
 	return (ENODEV);
 }
 
-	static int
+static int
 svm_vminit(void)
+{
+	kprintf("VMM: SVM not supported\n");
+	return (ENODEV);
+}
+
+static int
+svm_vmdestroy(void)
 {
 	kprintf("VMM: SVM not supported\n");
 	return (ENODEV);
@@ -36,6 +43,7 @@ static struct vmm_ctl ctl_svm = {
 	.enable = svm_enable,
 	.disable = svm_disable,
 	.vminit = svm_vminit,
+	.vmdestroy = svm_vmdestroy,
 };
 
 struct vmm_ctl*

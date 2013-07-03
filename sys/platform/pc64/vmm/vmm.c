@@ -100,3 +100,23 @@ vmm_vminit(void)
 
 	return ctl->vminit();
 }
+
+int
+vmm_vmdestroy(void)
+{
+	if (!vmm_enabled) {
+		return ENODEV;
+	}
+
+	return ctl->vmdestroy();
+}
+
+int
+vmm_vmenter(void)
+{
+	if (!vmm_enabled) {
+		return ENODEV;
+	}
+	kprintf("vmm_vmenter: test\n");
+	return 0;
+}
