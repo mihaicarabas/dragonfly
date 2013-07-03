@@ -22,10 +22,15 @@ typedef enum {
 
 /* VMX per cpu info */
 struct vmx_pcpu_info {
+	unsigned char *vmxon_region_na;
 	unsigned char *vmxon_region;
-	unsigned char *vmxon_region_aligned;
-
 };
+
+struct vmx_thread_info {
+	unsigned char *vmcs_region_na;
+	unsigned char *vmcs_region;
+};
+
 
 
 
