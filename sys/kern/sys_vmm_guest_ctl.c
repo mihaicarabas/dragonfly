@@ -21,19 +21,21 @@ sys_vmm_guest_ctl(struct vmm_guest_ctl_args *uap)
 {
 	int error = 0;
 
-	if (!vmm_enabled) {
-		kprintf("sys_vmm_guest: VMM not enabled\n");
-		error = ENODEV;
-		goto out;
-	}
-
 	switch (uap->operation) {
 		case VMM_GUEST_INIT:
 			kprintf("sys_vmm_guest: VMM_GUEST_INIT op\n");
+
+			curthread->td_type = TD_TYPE_VMM_GUEST;
+			error = vmm_vminit();
+			if (error) {
+				kprintf("sys_vmm_guest: vmm_vminit failed\n");
+				goto out;
+			}
 			break;
 		default:
 			kprintf("sys_vmm_guest: INVALID op\n");
 			error = EINVAL;
+			goto out;
 	}
 out:
 	return (error);
