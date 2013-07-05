@@ -16,6 +16,15 @@
 
 #include "vmx.h"
 #include "vmx_instr.h"
+#include "vmx_vmcs.h"
+
+#define ERROR_ON(func)					\
+	do {						\
+	if ((err = func))				\
+		kprintf("VMM: %s error at line: %d\n",	\
+		   __func__, __LINE__);			\
+		goto error;				\
+	} while(0)					\
 
 struct vmx_ctl_info vmx_pinbased = {
 	.msr_addr = IA32_VMX_PINBASED_CTLS,
@@ -319,6 +328,19 @@ execute_vmxoff(void *dummy)
 	load_cr4(rcr4() & ~CR4_VMXE);
 }
 
+static void
+execute_vmclear(void *vmcs_region)
+{
+	int err;
+	char *vmcs_reg = (char*) vmcs_region;
+
+	err = vmclear(vmcs_reg);
+	if (err) {
+		kprintf("VMM: vmclear failed on cpu%d\n", mycpuid);
+	}
+
+}
+
 static int
 vmx_enable(void)
 {
@@ -379,7 +401,7 @@ static int
 vmx_vminit(void)
 {
 	struct vmx_thread_info * vti;
-	int err = 0;
+	int err;
 
 	vti = kmalloc(sizeof(struct vmx_thread_info), M_TEMP, M_WAITOK | M_ZERO);
 	vti->vmcs_region_na = kmalloc(vmx_region_size + VMXON_REGION_ALIGN_SIZE,
@@ -393,19 +415,50 @@ vmx_vminit(void)
 	*((uint32_t *)vti->vmcs_region) = vmx_revision;
 
 	/* vmclear the vmcs to initialize it */
-	err = vmclear(vti->vmcs_region);
-	if (err) {
-		kprintf("VMM: vmx_vminit: vmclear vmcs_region failed\n");
-		goto error;
-	}
+	ERROR_ON(vmclear(vti->vmcs_region));
+
+	/* Make this the current VMCS */
+	ERROR_ON(vmptrld(vti->vmcs_region));
+
+	/* Load the VMX controls */
+	ERROR_ON(vmwrite(VMCS_PINBASED_CTLS, vmx_pinbased.ctls));
+	ERROR_ON(vmwrite(VMCS_PROCBASED_CTLS, vmx_procbased.ctls));
+	ERROR_ON(vmwrite(VMCS_PROCBASED2_CTLS, vmx_procbased2.ctls));
+	ERROR_ON(vmwrite(VMCS_VMEXIT_CTLS, vmx_exit.ctls));
+	ERROR_ON(vmwrite(VMCS_VMENTRY_CTLS, vmx_entry.ctls));
+
+	/* Load HOST CRs */
+	ERROR_ON(vmwrite(VMCS_HOST_CR0, rcr0()));
+	ERROR_ON(vmwrite(VMCS_HOST_CR4, rcr4()));
+
+	/* Load HOST selectors */
+	ERROR_ON(vmwrite(VMCS_HOST_ES_SELECTOR, GSEL(GDATA_SEL, SEL_KPL)));
+	ERROR_ON(vmwrite(VMCS_HOST_SS_SELECTOR, GSEL(GDATA_SEL, SEL_KPL)));
+	ERROR_ON(vmwrite(VMCS_HOST_FS_SELECTOR, GSEL(GDATA_SEL, SEL_KPL)));
+	ERROR_ON(vmwrite(VMCS_HOST_GS_SELECTOR, GSEL(GDATA_SEL, SEL_KPL)));
+	ERROR_ON(vmwrite(VMCS_HOST_CS_SELECTOR, GSEL(GCODE_SEL, SEL_KPL)));
+	ERROR_ON(vmwrite(VMCS_HOST_TR_SELECTOR, GSEL(GPROC0_SEL, SEL_KPL)));
+
+	/* Load Host FS base (not used) - 0 */
+	ERROR_ON(vmwrite(VMCS_HOST_FS_BASE, 0));
+
+	/* The other BASE addresses are written on each VMRUN in case
+	 * the CPU changes because are per-CPU values
+	 */
+
+	/* Never run before */
+	vti->last_cpu = -1;
+
+	ERROR_ON(vmclear(vti->vmcs_region));
 
 	curthread->td_vmm = (void*) vti;
 
-	goto out;
+	return 0;
 error:
+	kprintf("VMM: vmx_vminit failed\n");
+
 	kfree(vti->vmcs_region_na, M_TEMP);
 	kfree(vti, M_TEMP);
-out:
 	return err;
 }
 
@@ -427,6 +480,42 @@ vmx_vmdestroy(void)
 	return -1;
 }
 
+static int
+vmx_vmrun(void)
+{
+	struct vmx_thread_info * vti = (struct vmx_thread_info *) curthread->td_vmm;
+	struct globaldata *gd = mycpu;
+	struct globaldata *last_gd;
+	int seq;
+	int err;
+
+
+	if (vti->last_cpu != gd->gd_cpuid) {
+
+		/* Clear the VMCS area if ran on another CPU */
+		last_gd = globaldata_find(vti->last_cpu);
+		seq = lwkt_send_ipiq(last_gd, execute_vmclear, vti->vmcs_region);
+		lwkt_wait_ipiq(gd, seq);
+	
+		ERROR_ON(vmptrld(vti->vmcs_region));
+
+		ERROR_ON(vmwrite(VMCS_HOST_CR3, rcr3()));
+
+		ERROR_ON(vmwrite(VMCS_HOST_GS_BASE, (uint64_t) gd)); /* mycpu points to %gs:0 */
+		ERROR_ON(vmwrite(VMCS_HOST_TR_BASE, (uint64_t) &gd->gd_prvspace->mdglobaldata.gd_common_tss));
+
+		ERROR_ON(vmwrite(VMCS_HOST_GDTR_BASE, (uint64_t) &gdt[gd->gd_cpuid * NGDT]));
+		ERROR_ON(vmwrite(VMCS_HOST_IDTR_BASE, (uint64_t) &r_idt_arr[gd->gd_cpuid]));
+	}
+
+	return 0;
+
+error:
+	kprintf("VMM: vmx_vmrun failed\n");
+	return err;
+}
+
+
 static struct vmm_ctl ctl_vmx = {
 	.name = "VMX from Intel",
 	.init = vmx_init,
@@ -434,7 +523,7 @@ static struct vmm_ctl ctl_vmx = {
 	.disable = vmx_disable,
 	.vminit = vmx_vminit,
 	.vmdestroy = vmx_vmdestroy,
-
+	.vmrun = vmx_vmrun,
 };
 
 struct vmm_ctl*
