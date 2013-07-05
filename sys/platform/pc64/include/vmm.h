@@ -3,6 +3,6 @@
 
 int vmm_vminit(void);
 int vmm_vmdestroy(void);
-int vmm_vmenter(void);
+int vmm_vmrun(void);
 
 #endif

@@ -218,7 +218,7 @@ vmm:
 
 	cmpl $TD_TYPE_VMM_GUEST, TD_TYPE(%rbx)	/* is thread of type VMM_GUEST */
 	jnz vmm_disabled
-	call vmm_vmenter
+	call vmm_vmrun
 vmm_disabled:
 
 	POP_FRAME		/* registers and %gs (+cli) */
