@@ -112,11 +112,12 @@ vmm_vmdestroy(void)
 }
 
 int
-vmm_vmenter(void)
+vmm_vmrun(void)
 {
 	if (!vmm_enabled) {
 		return ENODEV;
 	}
 	kprintf("vmm_vmenter: test\n");
-	return 0;
+	return ctl->vmrun();
 }
+

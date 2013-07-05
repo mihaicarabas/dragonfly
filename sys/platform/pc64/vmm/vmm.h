@@ -10,6 +10,7 @@ struct vmm_ctl {
 	int (*disable)(void);
 	int (*vminit)(void);
 	int (*vmdestroy)(void);
+	int (*vmrun)(void);
 };
 
 struct vmm_ctl* get_ctl_intel(void);

@@ -37,6 +37,14 @@ svm_vmdestroy(void)
 	return (ENODEV);
 }
 
+static int
+svm_vmrun(void)
+{
+	kprintf("VMM: SVM not supported\n");
+	return (ENODEV);
+}
+
+
 static struct vmm_ctl ctl_svm = {
 	.name = "SVM from AMD",
 	.init = svm_init,
@@ -44,6 +52,7 @@ static struct vmm_ctl ctl_svm = {
 	.disable = svm_disable,
 	.vminit = svm_vminit,
 	.vmdestroy = svm_vmdestroy,
+	.vmrun = svm_vmrun,
 };
 
 struct vmm_ctl*
