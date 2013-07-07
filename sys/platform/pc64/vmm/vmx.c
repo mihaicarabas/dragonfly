@@ -442,9 +442,17 @@ vmx_vminit(void)
 	/* Load Host FS base (not used) - 0 */
 	ERROR_ON(vmwrite(VMCS_HOST_FS_BASE, 0));
 
-	/* The other BASE addresses are written on each VMRUN in case
+	/*
+	 * The other BASE addresses are written on each VMRUN in case
 	 * the CPU changes because are per-CPU values
 	 */
+
+	/*
+	 * Call vmx_vmexit on VM_EXIT condition
+	 * The RSP will point to the vmx_thread_info
+	 */
+	ERROR_ON(vmwrite(VMCS_HOST_RIP, (uint64_t) vmx_vmexit));
+	ERROR_ON(vmwrite(VMCS_HOST_RSP, (uint64_t) vti));
 
 	/* Never run before */
 	vti->last_cpu = -1;
@@ -488,7 +496,7 @@ vmx_vmrun(void)
 	struct globaldata *last_gd;
 	int seq;
 	int err;
-
+	int ret;
 
 	if (vti->last_cpu != gd->gd_cpuid) {
 
@@ -498,6 +506,7 @@ vmx_vmrun(void)
 		lwkt_wait_ipiq(gd, seq);
 	
 		ERROR_ON(vmptrld(vti->vmcs_region));
+		pcpu_info[gd->gd_cpuid].loaded_vmcs = vti->vmcs_region;
 
 		ERROR_ON(vmwrite(VMCS_HOST_CR3, rcr3()));
 
@@ -506,8 +515,34 @@ vmx_vmrun(void)
 
 		ERROR_ON(vmwrite(VMCS_HOST_GDTR_BASE, (uint64_t) &gdt[gd->gd_cpuid * NGDT]));
 		ERROR_ON(vmwrite(VMCS_HOST_IDTR_BASE, (uint64_t) &r_idt_arr[gd->gd_cpuid]));
+
+		vti->launched = 0;
+		vti->last_cpu = gd->gd_cpuid;
+
+	} else if (pcpu_info[gd->gd_cpuid].loaded_vmcs != vti->vmcs_region) {
+		/* If another VMCS was loaded, reload this one */
+		ERROR_ON(vmptrld(vti->vmcs_region));
+		pcpu_info[gd->gd_cpuid].loaded_vmcs = vti->vmcs_region;
+
+		vti->launched = 0;
 	}
 
+	if (vti->launched) { /* vmresume */
+		kprintf("VMM: vmx_run: vmx_resume\n");
+		ret = vmx_resume(vti);
+	} else { /* vmlaunch */
+		vti->launched = 1;
+		kprintf("VMM: vmx_run: vmx_launch\n");
+		ret = vmx_launch(vti);
+	}
+
+	if (ret == VM_EXIT) {
+		kprintf("VMM: vmx_run: VM_EXIT issued\n");
+	} else {
+		kprintf("VMM: vmx_run: vmenter failed with %d\n", ret);
+		err = -1;
+		goto error;
+	}
 	return 0;
 
 error:

@@ -11,6 +11,8 @@
 #define	VM_SUCCEED		0
 #define	VM_FAIL_INVALID		1
 #define	VM_FAIL_VALID		2
+#define	VM_EXIT			3
+
 #define	GET_ERROR_CODE				\
 	"		jnc 1f;"		\
 	"		mov $1, %[err];"	\
