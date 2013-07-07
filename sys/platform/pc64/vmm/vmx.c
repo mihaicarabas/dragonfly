@@ -431,6 +431,10 @@ vmx_vminit(void)
 	ERROR_ON(vmwrite(VMCS_HOST_CR0, rcr0()));
 	ERROR_ON(vmwrite(VMCS_HOST_CR4, rcr4()));
 
+	/* Load HOST EFER and PAT */
+	ERROR_ON(vmwrite(VMCS_HOST_IA32_PAT, rdmsr(MSR_PAT)));
+	ERROR_ON(vmwrite(VMCS_HOST_IA32_EFER, rdmsr(MSR_EFER)));
+
 	/* Load HOST selectors */
 	ERROR_ON(vmwrite(VMCS_HOST_ES_SELECTOR, GSEL(GDATA_SEL, SEL_KPL)));
 	ERROR_ON(vmwrite(VMCS_HOST_SS_SELECTOR, GSEL(GDATA_SEL, SEL_KPL)));
@@ -453,6 +457,13 @@ vmx_vminit(void)
 	 */
 	ERROR_ON(vmwrite(VMCS_HOST_RIP, (uint64_t) vmx_vmexit));
 	ERROR_ON(vmwrite(VMCS_HOST_RSP, (uint64_t) vti));
+
+	/*
+	 * This field is included for future expansion.
+	 * Software should set this field to FFFFFFFF_FFFFFFFFH
+	 * to avoid VM-entry failures (see Section 26.3.1.5).
+	 */
+	ERROR_ON(vmwrite(VMCS_LINK_POINTER, ~0));
 
 	/* Never run before */
 	vti->last_cpu = -1;
