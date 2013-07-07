@@ -70,8 +70,6 @@ ENTRY(vmx_vmexit)
 	movq VTI_HOST_R14(%rdi),%r14
 	movq VTI_HOST_R15(%rdi),%r15
 	movq VTI_HOST_RSP(%rdi),%rsp
-	movq VTI_HOST_RIP(%rdi),%rsi
-	movq %rsi,(%rsp)
 
 	movq $VM_EXIT, %rax
 
@@ -148,8 +146,6 @@ ENTRY(vmx_resume)
 	movq VTI_HOST_R14(%rdi),%r14
 	movq VTI_HOST_R15(%rdi),%r15
 	movq VTI_HOST_RSP(%rdi),%rsp
-	movq VTI_HOST_RIP(%rdi),%rsi
-	movq %rsi,(%rsp)
 
 	ret
 END(vmx_launch)
