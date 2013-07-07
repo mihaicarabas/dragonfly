@@ -30,7 +30,6 @@ ASSYM(VTI_HOST_R12, offsetof(struct vmx_thread_info, host_r12));
 ASSYM(VTI_HOST_R13, offsetof(struct vmx_thread_info, host_r13));
 ASSYM(VTI_HOST_R14, offsetof(struct vmx_thread_info, host_r14));
 ASSYM(VTI_HOST_R15, offsetof(struct vmx_thread_info, host_r15));
-ASSYM(VTI_HOST_RIP, offsetof(struct vmx_thread_info, host_rip));
 ASSYM(VTI_HOST_RSP, offsetof(struct vmx_thread_info, host_rsp));
 
 ASSYM(VM_SUCCEED, VM_SUCCEED);

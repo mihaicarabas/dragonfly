@@ -59,7 +59,6 @@ struct vmx_thread_info {
 	register_t	host_r13;
 	register_t	host_r14;
 	register_t	host_r15;
-	register_t	host_rip;
 	register_t	host_rsp;
 
 };

@@ -74,7 +74,7 @@ ENTRY(vmx_vmexit)
 	movq $VM_EXIT, %rax
 
 	ret
-END(vmx_launch)
+END(vmx_vmexit)
 
 /*
  * int vmx_launch(struct vmx_thread_info* vti)
@@ -88,8 +88,6 @@ ENTRY(vmx_launch)
 	movq %r14,VTI_HOST_R14(%rdi)
 	movq %r15,VTI_HOST_R15(%rdi)
 	movq %rsp,VTI_HOST_RSP(%rdi)
-	movq (%rsp),%rsi
-	movq %rsi,VTI_HOST_RIP(%rdi)
 
 	movq %rdi,%rsp
 
@@ -108,8 +106,6 @@ ENTRY(vmx_launch)
 	movq VTI_HOST_R14(%rdi),%r14
 	movq VTI_HOST_R15(%rdi),%r15
 	movq VTI_HOST_RSP(%rdi),%rsp
-	movq VTI_HOST_RIP(%rdi),%rsi
-	movq %rsi,(%rsp)
 
 	ret
 END(vmx_launch)
@@ -126,8 +122,6 @@ ENTRY(vmx_resume)
 	movq %r14,VTI_HOST_R14(%rdi)
 	movq %r15,VTI_HOST_R15(%rdi)
 	movq %rsp,VTI_HOST_RSP(%rdi)
-	movq (%rsp),%rsi
-	movq %rsi,VTI_HOST_RIP(%rdi)
 
 	movq %rdi,%rsp
 
@@ -148,4 +142,4 @@ ENTRY(vmx_resume)
 	movq VTI_HOST_RSP(%rdi),%rsp
 
 	ret
-END(vmx_launch)
+END(vmx_resume)
