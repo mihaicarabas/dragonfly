@@ -24,6 +24,7 @@ typedef enum {
 struct vmx_pcpu_info {
 	unsigned char *vmxon_region_na;
 	unsigned char *vmxon_region;
+	unsigned char *loaded_vmcs;
 };
 
 struct vmx_thread_info {
@@ -31,7 +32,7 @@ struct vmx_thread_info {
 	unsigned char *vmcs_region;
 	int launched;
 	int last_cpu;
-	/* Guest unsaved registers in VMCS*/
+	/* Guest unsaved registers in VMCS */
 	register_t	guest_rax;
 	register_t	guest_rbx;
 	register_t	guest_rcx;
@@ -50,17 +51,22 @@ struct vmx_thread_info {
 	register_t	guest_cr2;
 
 	/* Host unsaved registers in VMCS */
-	register_t	host_r15;
-	register_t	host_r14;
-	register_t	host_r13;
-	register_t	host_r12;
-	register_t	host_rbp;
-	register_t	host_rsp;
 	register_t	host_rbx;
+	register_t	host_rbp;
+	register_t	host_r10;
+	register_t	host_r11;
+	register_t	host_r12;
+	register_t	host_r13;
+	register_t	host_r14;
+	register_t	host_r15;
 	register_t	host_rip;
+	register_t	host_rsp;
 
 };
 
+int vmx_launch(struct vmx_thread_info *);
+int vmx_resume(struct vmx_thread_info *);
+void vmx_vmexit(void);
 
 
 
