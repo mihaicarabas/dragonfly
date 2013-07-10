@@ -203,7 +203,7 @@ void vmx_vmexit(void);
     ((val) & (1ULL << (bit + 32)))
 
 #define IS_ZERO_SETTING_ALLOWED(val, bit)	\
-    ((val) & (1ULL << (bit)))
+    (((val) & (1ULL << (bit))) == 0)
 
 
 
