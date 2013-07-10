@@ -214,6 +214,31 @@ build_vmx_sysctl(void)
 	    OID_AUTO, "width_addr", CTLFLAG_RD,
 	    &vmx_width_addr, 0,
 	    "VMX width address");
+	SYSCTL_ADD_INT(&vmx_sysctl_ctx,
+	    SYSCTL_CHILDREN(vmx_sysctl_tree),
+	    OID_AUTO, "pinbased_ctls", CTLFLAG_RD,
+	    &vmx_pinbased.ctls, 0,
+	    "VMX width address");
+	SYSCTL_ADD_INT(&vmx_sysctl_ctx,
+	    SYSCTL_CHILDREN(vmx_sysctl_tree),
+	    OID_AUTO, "procbased_ctls", CTLFLAG_RD,
+	    &vmx_procbased.ctls, 0,
+	    "VMX width address");
+	SYSCTL_ADD_INT(&vmx_sysctl_ctx,
+	    SYSCTL_CHILDREN(vmx_sysctl_tree),
+	    OID_AUTO, "procbased2_ctls", CTLFLAG_RD,
+	    &vmx_procbased2.ctls, 0,
+	    "VMX width address");
+	SYSCTL_ADD_INT(&vmx_sysctl_ctx,
+	    SYSCTL_CHILDREN(vmx_sysctl_tree),
+	    OID_AUTO, "vmexit_ctls", CTLFLAG_RD,
+	    &vmx_exit.ctls, 0,
+	    "VMX width address");
+	SYSCTL_ADD_INT(&vmx_sysctl_ctx,
+	    SYSCTL_CHILDREN(vmx_sysctl_tree),
+	    OID_AUTO, "vmentry_ctls", CTLFLAG_RD,
+	    &vmx_entry.ctls, 0,
+	    "VMX width address");
 }
 
 static int
@@ -221,7 +246,7 @@ vmx_init(void)
 {
 	uint64_t feature_control;
 	uint64_t vmx_basic_value;
-	int err;
+//	int err;
 
 
 	/*
@@ -240,32 +265,40 @@ vmx_init(void)
 	vmx_set_default_settings(&vmx_exit);
 	vmx_set_default_settings(&vmx_entry);
 
-	/* Enable second level for procbades */
-	err = vmx_set_ctl_setting(&vmx_procbased,
+	kprintf("pinbased ctl: %llu; msr %llu, truemsg %llu\n", (unsigned long long) vmx_pinbased.ctls, (unsigned long long) rdmsr(vmx_pinbased.msr_addr), (unsigned long long) rdmsr(vmx_pinbased.msr_true_addr));
+	kprintf("procbased ctl: %llu; msr %llu, truemsg %llu\n", (unsigned long long) vmx_procbased.ctls, (unsigned long long) rdmsr(vmx_procbased.msr_addr), (unsigned long long) rdmsr(vmx_procbased.msr_true_addr));
+	kprintf("procbased2 ctl: %llu; msr %llu, truemsg %llu\n", (unsigned long long) vmx_procbased2.ctls, (unsigned long long) rdmsr(vmx_procbased2.msr_addr), (unsigned long long) rdmsr(vmx_procbased2.msr_true_addr));
+	kprintf("exit ctl: %llu; msr %llu, truemsg %llu\n", (unsigned long long) vmx_exit.ctls, (unsigned long long) rdmsr(vmx_exit.msr_addr), (unsigned long long) rdmsr(vmx_exit.msr_true_addr));
+	kprintf("entry ctl: %llu; msr %llu, truemsg %llu\n", (unsigned long long) vmx_entry.ctls, (unsigned long long) rdmsr(vmx_entry.msr_addr), (unsigned long long) rdmsr(vmx_entry.msr_true_addr));
+
+
+
+	/* Enable second level for procbased */
+/*	err = vmx_set_ctl_setting(&vmx_procbased,
 	    PROCBASED_ACTIVATE_SECONDARY_CONTROLS,
 	    ONE);
 	if (err) {
 		kprintf("VMM: PROCBASED_ACTIVATE_SECONDARY_CONTROLS not supported by this CPU\n");
 		return (ENODEV);
 	}
-
-	/* Enable EPT feature */
-	err = vmx_set_ctl_setting(&vmx_procbased2,
-	    PROCBASED2_ENABLE_EPT,
-	    ONE);
-	if (err) {
-		kprintf("VMM: PROCBASED2_ENABLE_EPT not supported by this CPU\n");
-		return (ENODEV);
-	}
-
-	/* Enable VPID feature */
-	err = vmx_set_ctl_setting(&vmx_procbased2,
-	    PROCBASED2_ENABLE_VPID,
-	    ONE);
-	if (err) {
-		kprintf("VMM: PROCBASED2_ENABLE_VPID not supported by this CPU\n");
-		return (ENODEV);
-	}
+*/
+//	/* Enable EPT feature */
+//	err = vmx_set_ctl_setting(&vmx_procbased2,
+//	    PROCBASED2_ENABLE_EPT,
+//	    ONE);
+//	if (err) {
+//		kprintf("VMM: PROCBASED2_ENABLE_EPT not supported by this CPU\n");
+//		return (ENODEV);
+//	}
+//
+//	/* Enable VPID feature */
+//	err = vmx_set_ctl_setting(&vmx_procbased2,
+//	    PROCBASED2_ENABLE_VPID,
+//	    ONE);
+//	if (err) {
+//		kprintf("VMM: PROCBASED2_ENABLE_VPID not supported by this CPU\n");
+//		return (ENODEV);
+//	}
 
 
 	/* Check for the feature control status */
@@ -403,6 +436,7 @@ vmx_vminit(void)
 {
 	struct vmx_thread_info * vti;
 	int err;
+	struct globaldata *gd = mycpu;
 
 	vti = kmalloc(sizeof(struct vmx_thread_info), M_TEMP, M_WAITOK | M_ZERO);
 	vti->vmcs_region_na = kmalloc(vmx_region_size + VMXON_REGION_ALIGN_SIZE,
@@ -433,8 +467,8 @@ vmx_vminit(void)
 	ERROR_ON(vmwrite(VMCS_HOST_CR4, rcr4()));
 
 	/* Load HOST EFER and PAT */
-	ERROR_ON(vmwrite(VMCS_HOST_IA32_PAT, rdmsr(MSR_PAT)));
-	ERROR_ON(vmwrite(VMCS_HOST_IA32_EFER, rdmsr(MSR_EFER)));
+//	ERROR_ON(vmwrite(VMCS_HOST_IA32_PAT, rdmsr(MSR_PAT)));
+//	ERROR_ON(vmwrite(VMCS_HOST_IA32_EFER, rdmsr(MSR_EFER)));
 
 	/* Load HOST selectors */
 	ERROR_ON(vmwrite(VMCS_HOST_ES_SELECTOR, GSEL(GDATA_SEL, SEL_KPL)));
@@ -444,13 +478,43 @@ vmx_vminit(void)
 	ERROR_ON(vmwrite(VMCS_HOST_CS_SELECTOR, GSEL(GCODE_SEL, SEL_KPL)));
 	ERROR_ON(vmwrite(VMCS_HOST_TR_SELECTOR, GSEL(GPROC0_SEL, SEL_KPL)));
 
+	ERROR_ON(vmwrite(VMCS_VMEXIT_MSR_STORE_COUNT, 0));
+	ERROR_ON(vmwrite(VMCS_VMEXIT_MSR_LOAD_COUNT, 0));
+	ERROR_ON(vmwrite(VMCS_VMENTRY_MSR_LOAD_COUNT, 0));
+	ERROR_ON(vmwrite(VMCS_VMENTRY_INTR_INFO, 0));
+
+	ERROR_ON(vmwrite(VMCS_CR3_TARGET_COUNT, 0));
+	ERROR_ON(vmwrite(VMCS_CR3_TARGET_VALUE0, 0));
+	ERROR_ON(vmwrite(VMCS_CR3_TARGET_VALUE1, 0));
+	ERROR_ON(vmwrite(VMCS_CR3_TARGET_VALUE2, 0));
+	ERROR_ON(vmwrite(VMCS_CR3_TARGET_VALUE3, 0));
+
+	ERROR_ON(vmwrite(VMCS_TSC_OFFSET, 0));
+	ERROR_ON(vmwrite(VMCS_PAGE_FAULT_ERR_MASK, 0));
+	ERROR_ON(vmwrite(VMCS_PAGE_FAULT_ERR_MATCH, 0));
+
+	ERROR_ON(vmwrite(VMCS_GUEST_IA32_SYSENTER_ESP, rdmsr(MSR_SYSENTER_ESP_MSR)));
+	ERROR_ON(vmwrite(VMCS_GUEST_IA32_SYSENTER_EIP, rdmsr(MSR_SYSENTER_EIP_MSR)));
+
+	ERROR_ON(vmwrite(VMCS_HOST_IA32_SYSENTER_EIP, rdmsr(MSR_SYSENTER_EIP_MSR)));
+	ERROR_ON(vmwrite(VMCS_HOST_IA32_SYSENTER_ESP, rdmsr(MSR_SYSENTER_ESP_MSR)));
+	ERROR_ON(vmwrite(VMCS_HOST_IA32_SYSENTER_CS, rdmsr(MSR_SYSENTER_CS_MSR)));
+
+
 	/* Load Host FS base (not used) - 0 */
 	ERROR_ON(vmwrite(VMCS_HOST_FS_BASE, 0));
 
 	/*
-	 * The other BASE addresses are written on each VMRUN in case
+	 * The next BASE addresses are written on each VMRUN in case
 	 * the CPU changes because are per-CPU values
 	 */
+	ERROR_ON(vmwrite(VMCS_HOST_CR3, rcr3()));
+
+	ERROR_ON(vmwrite(VMCS_HOST_GS_BASE, (uint64_t) gd)); /* mycpu points to %gs:0 */
+	ERROR_ON(vmwrite(VMCS_HOST_TR_BASE, (uint64_t) &gd->gd_prvspace->mdglobaldata.gd_common_tss));
+
+	ERROR_ON(vmwrite(VMCS_HOST_GDTR_BASE, (uint64_t) &gdt[gd->gd_cpuid * NGDT]));
+	ERROR_ON(vmwrite(VMCS_HOST_IDTR_BASE, (uint64_t) &r_idt_arr[gd->gd_cpuid]));
 
 	/*
 	 * Call vmx_vmexit on VM_EXIT condition
@@ -464,12 +528,11 @@ vmx_vminit(void)
 	 * Software should set this field to FFFFFFFF_FFFFFFFFH
 	 * to avoid VM-entry failures (see Section 26.3.1.5).
 	 */
-	ERROR_ON(vmwrite(VMCS_LINK_POINTER, ~0));
+	ERROR_ON(vmwrite(VMCS_LINK_POINTER, ~0ULL));
 
-	/* Never run before */
-	vti->last_cpu = -1;
-
-	ERROR_ON(vmclear(vti->vmcs_region));
+	/* Initialized on this CPU */
+	vti->last_cpu = gd->gd_cpuid;
+	pcpu_info[gd->gd_cpuid].loaded_vmcs = vti->vmcs_region;
 
 	curthread->td_vmm = (void*) vti;
 
@@ -509,16 +572,24 @@ vmx_vmrun(void)
 	int seq;
 	int err;
 	int ret;
+	uint64_t val;
+
+	if(vti == NULL ){
+		kprintf("VMM: vmx_vmrum vti is NULL\n");
+		return -1;
+	}
 
 	if (vti->last_cpu != gd->gd_cpuid) {
-
+		kprintf("VMM: vmx_vmrun 1\n");
 		/* Clear the VMCS area if ran on another CPU */
 		last_gd = globaldata_find(vti->last_cpu);
 		seq = lwkt_send_ipiq(last_gd, execute_vmclear, vti->vmcs_region);
 		lwkt_wait_ipiq(gd, seq);
-	
+		kprintf("VMM: vmx_vmrun 2\n");
+
 		ERROR_ON(vmptrld(vti->vmcs_region));
 		pcpu_info[gd->gd_cpuid].loaded_vmcs = vti->vmcs_region;
+		kprintf("VMM: vmx_vmrun 3\n");
 
 		ERROR_ON(vmwrite(VMCS_HOST_CR3, rcr3()));
 
@@ -530,29 +601,38 @@ vmx_vmrun(void)
 
 		vti->launched = 0;
 		vti->last_cpu = gd->gd_cpuid;
+		kprintf("VMM: vmx_vmrun 4\n");
 
 	} else if (pcpu_info[gd->gd_cpuid].loaded_vmcs != vti->vmcs_region) {
+		kprintf("VMM: vmx_vmrun 5\n");
+
 		/* If another VMCS was loaded, reload this one */
 		ERROR_ON(vmptrld(vti->vmcs_region));
 		pcpu_info[gd->gd_cpuid].loaded_vmcs = vti->vmcs_region;
 
 		vti->launched = 0;
+		kprintf("VMM: vmx_vmrun 6\n");
 	}
 
 	if (vti->launched) { /* vmresume */
-		kprintf("VMM: vmx_run: vmx_resume\n");
+		kprintf("VMM: vmx_vmrun: vmx_resume\n");
 		ret = vmx_resume(vti);
 	} else { /* vmlaunch */
-		vti->launched = 1;
-		kprintf("VMM: vmx_run: vmx_launch\n");
+		kprintf("VMM: vmx_vmrun: vmx_launch\n");
+		vti->launched = 0;
 		ret = vmx_launch(vti);
 	}
 
 	if (ret == VM_EXIT) {
-		kprintf("VMM: vmx_run: VM_EXIT issued\n");
+		kprintf("VMM: vmx_vmrun: VM_EXIT issued\n");
 	} else {
-		kprintf("VMM: vmx_run: vmenter failed with %d\n", ret);
-		err = -1;
+		if (ret == VM_FAIL_VALID) {
+			vmread(VMCS_INSTR_ERR, &val);
+			err = (int) val;
+			kprintf("VMM: vmx_vmrun: vmenter failed with VM_FAIL_VALID, error code %d\n", err);
+		} else {
+			kprintf("VMM: vmx_vmrun: vmenter failed with VM_FAIL_INVALID\n");
+		}
 		goto error;
 	}
 	return 0;
