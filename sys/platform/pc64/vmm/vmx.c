@@ -20,10 +20,11 @@
 
 #define ERROR_ON(func)					\
 	do {						\
-	if ((err = func))				\
+	if ((err = func)) {				\
 		kprintf("VMM: %s error at line: %d\n",	\
 		   __func__, __LINE__);			\
 		goto error;				\
+	}						\
 	} while(0)					\
 
 struct vmx_ctl_info vmx_pinbased = {
@@ -108,17 +109,17 @@ vmx_set_ctl_setting(struct vmx_ctl_info *vmx_ctl, uint32_t bit_no, setting_t val
 					ctl_val = rdmsr(vmx_ctl->msr_addr);
 
 				if (IS_ZERO_SETTING_ALLOWED(ctl_val, bit_no))
-					vmx_ctl->ctls |= ~BIT(bit_no);
-				if (IS_ONE_SETTING_ALLOWED(ctl_val, bit_no))
-					vmx_ctl->ctls &= BIT(bit_no);
+					vmx_ctl->ctls &= ~BIT(bit_no);
+				else if (IS_ONE_SETTING_ALLOWED(ctl_val, bit_no))
+					vmx_ctl->ctls |= BIT(bit_no);
 
 			} else if (IS_ZERO_SETTING_ALLOWED(ctl_val, bit_no)) {
 				/* b.i), c.i) */
-				vmx_ctl->ctls |= ~BIT(bit_no);
+				vmx_ctl->ctls &= ~BIT(bit_no);
 
 			} else if (IS_ONE_SETTING_ALLOWED(ctl_val, bit_no)) {
 				/* b.i), c.i) */
-				vmx_ctl->ctls &= BIT(bit_no);
+				vmx_ctl->ctls |= BIT(bit_no);
 
 			} else {
 				return (EINVAL);
@@ -129,7 +130,7 @@ vmx_set_ctl_setting(struct vmx_ctl_info *vmx_ctl, uint32_t bit_no, setting_t val
 			if (!IS_ZERO_SETTING_ALLOWED(ctl_val, bit_no))
 				return (EINVAL);
 
-			vmx_ctl->ctls |= ~BIT(bit_no);
+			vmx_ctl->ctls &= ~BIT(bit_no);
 
 			break;
 		case ONE:
@@ -137,7 +138,7 @@ vmx_set_ctl_setting(struct vmx_ctl_info *vmx_ctl, uint32_t bit_no, setting_t val
 			if (!IS_ONE_SETTING_ALLOWED(ctl_val, bit_no))
 				return (EINVAL);
 
-			vmx_ctl->ctls &= BIT(bit_no);
+			vmx_ctl->ctls |= BIT(bit_no);
 
 			break;
 	}
