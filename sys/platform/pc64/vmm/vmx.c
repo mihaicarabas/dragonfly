@@ -246,7 +246,7 @@ vmx_init(void)
 {
 	uint64_t feature_control;
 	uint64_t vmx_basic_value;
-//	int err;
+	int err;
 
 
 	/*
@@ -271,17 +271,26 @@ vmx_init(void)
 	kprintf("exit ctl: %llu; msr %llu, truemsg %llu\n", (unsigned long long) vmx_exit.ctls, (unsigned long long) rdmsr(vmx_exit.msr_addr), (unsigned long long) rdmsr(vmx_exit.msr_true_addr));
 	kprintf("entry ctl: %llu; msr %llu, truemsg %llu\n", (unsigned long long) vmx_entry.ctls, (unsigned long long) rdmsr(vmx_entry.msr_addr), (unsigned long long) rdmsr(vmx_entry.msr_true_addr));
 
-
-
 	/* Enable second level for procbased */
-/*	err = vmx_set_ctl_setting(&vmx_procbased,
+	err = vmx_set_ctl_setting(&vmx_procbased,
 	    PROCBASED_ACTIVATE_SECONDARY_CONTROLS,
 	    ONE);
 	if (err) {
 		kprintf("VMM: PROCBASED_ACTIVATE_SECONDARY_CONTROLS not supported by this CPU\n");
 		return (ENODEV);
 	}
-*/
+
+	/* Enable second level for procbased */
+	err = vmx_set_ctl_setting(&vmx_exit,
+	    VMEXIT_HOST_ADDRESS_SPACE_SIZE,
+	    ONE);
+	if (err) {
+		kprintf("VMM: PROCBASED_ACTIVATE_SECONDARY_CONTROLS not supported by this CPU\n");
+		return (ENODEV);
+	}
+
+
+
 //	/* Enable EPT feature */
 //	err = vmx_set_ctl_setting(&vmx_procbased2,
 //	    PROCBASED2_ENABLE_EPT,
@@ -467,8 +476,8 @@ vmx_vminit(void)
 	ERROR_ON(vmwrite(VMCS_HOST_CR4, rcr4()));
 
 	/* Load HOST EFER and PAT */
-//	ERROR_ON(vmwrite(VMCS_HOST_IA32_PAT, rdmsr(MSR_PAT)));
-//	ERROR_ON(vmwrite(VMCS_HOST_IA32_EFER, rdmsr(MSR_EFER)));
+	ERROR_ON(vmwrite(VMCS_HOST_IA32_PAT, rdmsr(MSR_PAT)));
+	ERROR_ON(vmwrite(VMCS_HOST_IA32_EFER, rdmsr(MSR_EFER)));
 
 	/* Load HOST selectors */
 	ERROR_ON(vmwrite(VMCS_HOST_ES_SELECTOR, GSEL(GDATA_SEL, SEL_KPL)));
@@ -478,27 +487,13 @@ vmx_vminit(void)
 	ERROR_ON(vmwrite(VMCS_HOST_CS_SELECTOR, GSEL(GCODE_SEL, SEL_KPL)));
 	ERROR_ON(vmwrite(VMCS_HOST_TR_SELECTOR, GSEL(GPROC0_SEL, SEL_KPL)));
 
-	ERROR_ON(vmwrite(VMCS_VMEXIT_MSR_STORE_COUNT, 0));
-	ERROR_ON(vmwrite(VMCS_VMEXIT_MSR_LOAD_COUNT, 0));
-	ERROR_ON(vmwrite(VMCS_VMENTRY_MSR_LOAD_COUNT, 0));
-	ERROR_ON(vmwrite(VMCS_VMENTRY_INTR_INFO, 0));
 
-	ERROR_ON(vmwrite(VMCS_CR3_TARGET_COUNT, 0));
-	ERROR_ON(vmwrite(VMCS_CR3_TARGET_VALUE0, 0));
-	ERROR_ON(vmwrite(VMCS_CR3_TARGET_VALUE1, 0));
-	ERROR_ON(vmwrite(VMCS_CR3_TARGET_VALUE2, 0));
-	ERROR_ON(vmwrite(VMCS_CR3_TARGET_VALUE3, 0));
+//	ERROR_ON(vmwrite(VMCS_GUEST_IA32_SYSENTER_ESP, rdmsr(MSR_SYSENTER_ESP_MSR)));
+//	ERROR_ON(vmwrite(VMCS_GUEST_IA32_SYSENTER_EIP, rdmsr(MSR_SYSENTER_EIP_MSR)));
 
-	ERROR_ON(vmwrite(VMCS_TSC_OFFSET, 0));
-	ERROR_ON(vmwrite(VMCS_PAGE_FAULT_ERR_MASK, 0));
-	ERROR_ON(vmwrite(VMCS_PAGE_FAULT_ERR_MATCH, 0));
-
-	ERROR_ON(vmwrite(VMCS_GUEST_IA32_SYSENTER_ESP, rdmsr(MSR_SYSENTER_ESP_MSR)));
-	ERROR_ON(vmwrite(VMCS_GUEST_IA32_SYSENTER_EIP, rdmsr(MSR_SYSENTER_EIP_MSR)));
-
-	ERROR_ON(vmwrite(VMCS_HOST_IA32_SYSENTER_EIP, rdmsr(MSR_SYSENTER_EIP_MSR)));
-	ERROR_ON(vmwrite(VMCS_HOST_IA32_SYSENTER_ESP, rdmsr(MSR_SYSENTER_ESP_MSR)));
-	ERROR_ON(vmwrite(VMCS_HOST_IA32_SYSENTER_CS, rdmsr(MSR_SYSENTER_CS_MSR)));
+//	ERROR_ON(vmwrite(VMCS_HOST_IA32_SYSENTER_EIP, rdmsr(MSR_SYSENTER_EIP_MSR)));
+//	ERROR_ON(vmwrite(VMCS_HOST_IA32_SYSENTER_ESP, rdmsr(MSR_SYSENTER_ESP_MSR)));
+//	ERROR_ON(vmwrite(VMCS_HOST_IA32_SYSENTER_CS, rdmsr(MSR_SYSENTER_CS_MSR)));
 
 
 	/* Load Host FS base (not used) - 0 */
@@ -533,7 +528,7 @@ vmx_vminit(void)
 	/* Initialized on this CPU */
 	vti->last_cpu = gd->gd_cpuid;
 	pcpu_info[gd->gd_cpuid].loaded_vmcs = vti->vmcs_region;
-
+	//kprintf("HOST CR4: %llx\n", (long long) rcr4());
 	curthread->td_vmm = (void*) vti;
 
 	return 0;
@@ -625,6 +620,7 @@ vmx_vmrun(void)
 
 	if (ret == VM_EXIT) {
 		kprintf("VMM: vmx_vmrun: VM_EXIT issued\n");
+		while(1);
 	} else {
 		if (ret == VM_FAIL_VALID) {
 			vmread(VMCS_INSTR_ERR, &val);
