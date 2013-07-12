@@ -509,7 +509,7 @@ vmx_vminit(void)
 	ERROR_ON(vmwrite(VMCS_HOST_TR_BASE, (uint64_t) &gd->gd_prvspace->mdglobaldata.gd_common_tss));
 
 	ERROR_ON(vmwrite(VMCS_HOST_GDTR_BASE, (uint64_t) &gdt[gd->gd_cpuid * NGDT]));
-	ERROR_ON(vmwrite(VMCS_HOST_IDTR_BASE, (uint64_t) &r_idt_arr[gd->gd_cpuid]));
+	ERROR_ON(vmwrite(VMCS_HOST_IDTR_BASE, (uint64_t) r_idt_arr[gd->gd_cpuid].rd_base));
 
 	/*
 	 * Call vmx_vmexit on VM_EXIT condition
@@ -620,7 +620,8 @@ vmx_vmrun(void)
 
 	if (ret == VM_EXIT) {
 		kprintf("VMM: vmx_vmrun: VM_EXIT issued\n");
-		while(1);
+		vmread(VMCS_VMEXIT_REASON, &val);
+		kprintf("VMM: vmx_vmrun: VM_EXIT reason %d\n", (int) (val & 0xffff));
 	} else {
 		if (ret == VM_FAIL_VALID) {
 			vmread(VMCS_INSTR_ERR, &val);
@@ -631,6 +632,7 @@ vmx_vmrun(void)
 		}
 		goto error;
 	}
+	kprintf("VMM: vmx_vmrun: returning with success\n");
 	return 0;
 
 error:
