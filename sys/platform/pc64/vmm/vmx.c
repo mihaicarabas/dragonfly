@@ -592,7 +592,7 @@ vmx_vmrun(void)
 		ERROR_ON(vmwrite(VMCS_HOST_TR_BASE, (uint64_t) &gd->gd_prvspace->mdglobaldata.gd_common_tss));
 
 		ERROR_ON(vmwrite(VMCS_HOST_GDTR_BASE, (uint64_t) &gdt[gd->gd_cpuid * NGDT]));
-		ERROR_ON(vmwrite(VMCS_HOST_IDTR_BASE, (uint64_t) &r_idt_arr[gd->gd_cpuid]));
+		ERROR_ON(vmwrite(VMCS_HOST_IDTR_BASE, (uint64_t) r_idt_arr[gd->gd_cpuid].rd_base));
 
 		vti->launched = 0;
 		vti->last_cpu = gd->gd_cpuid;
