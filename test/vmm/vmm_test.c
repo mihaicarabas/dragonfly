@@ -29,6 +29,7 @@ main(void)
 	size_t len = 3;
 	int enable = 0;
 	int enabl2 = 0;
+	void *stack;
 //	sysctlnametomib("hw.vmm.enable", mib, &len);
 //	test();
 //	error = vmm_guest_ctl(100);
@@ -48,8 +49,8 @@ main(void)
 //	enable = 1;
 //	if (sysctl(mib, 3, NULL, NULL, &enable, sizeof(int)) == -1)
 //		perror("sysctl");
-
-	error = vmm_guest_ctl(VMM_GUEST_INIT);
+	posix_memalign(&stack, PAGE_SIZE, 64 * PAGE_SIZE);
+	error = vmm_guest_ctl(VMM_GUEST_INIT, (uint64_t) test, (uint64_t) stack);
 	vmm_printf(VMM_GUEST_INIT, error, 0);
 	return 0;
 }

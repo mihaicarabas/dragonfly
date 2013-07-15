@@ -2294,6 +2294,8 @@ struct	vmm_guest_ctl_args {
 	struct sysmsg sysmsg;
 #endif
 	int	operation;	char operation_[PAD_(int)];
+	uint64_t	rip;	char rip_[PAD_(uint64_t)];
+	uint64_t	rsp;	char rsp_[PAD_(uint64_t)];
 };
 
 #ifdef COMPAT_43

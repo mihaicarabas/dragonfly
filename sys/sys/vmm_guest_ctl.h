@@ -18,7 +18,7 @@
 #endif
 
 __BEGIN_DECLS
-int	vmm_guest_ctl (int);
+int	vmm_guest_ctl (int, uint64_t, uint64_t);
 __END_DECLS
 
 #endif /* !_KERNEL */

@@ -116,7 +116,8 @@ static int svm_disable(void) {
  *	Allocates a VMCB for the current thread and flags the thread to return
  *	to usermode via svm_vmrun().
  */
-static int svm_vminit(void) {
+static int svm_vminit(struct guest_options *options) {
+{
 	return (ENODEV);
 }
 

@@ -3,12 +3,14 @@
 
 #define MAX_NAME_LEN 256
 
+#include <sys/param.h>
+
 struct vmm_ctl {
 	char name[MAX_NAME_LEN];
 	int (*init)(void);
 	int (*enable)(void);
 	int (*disable)(void);
-	int (*vminit)(void);
+	int (*vminit)(uint64_t rip, uint64_t rsp);
 	int (*vmdestroy)(void);
 	int (*vmrun)(void);
 };

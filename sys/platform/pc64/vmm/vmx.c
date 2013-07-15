@@ -454,7 +454,7 @@ vmx_disable(void)
 }
 
 static int
-vmx_vminit(void)
+vmx_vminit(uint64_t rip, uint64_t rsp)
 {
 	struct vmx_thread_info * vti;
 	int err;
@@ -544,6 +544,10 @@ vmx_vminit(void)
 	ERROR_ON(vmwrite(VMCS_GUEST_TR_ACCESS_RIGHTS, 0x0000008B));
 
 	ERROR_ON(vmwrite(VMCS_GUEST_CR0, (CR0_PE | CR0_PG | cr0_fixed_to_1) & ~cr0_fixed_to_0));
+	ERROR_ON(vmwrite(VMCS_GUEST_CR4, (CR4_PAE | cr4_fixed_to_1) & ~ cr4_fixed_to_0));
+	kprintf("VMM: GUEST: CR0: %llx\n", (long long) (CR0_PE | CR0_PG | cr0_fixed_to_1) & ~cr0_fixed_to_0);
+	kprintf("VMM: GUEST: CR4: %llx\n", (long long) (CR4_PAE | cr4_fixed_to_1) & ~cr4_fixed_to_0);
+
 	ERROR_ON(vmwrite(VMCS_GUEST_RFLAGS, 0x02));
 
 	ERROR_ON(vmwrite(VMCS_GUEST_CR3, (uint64_t) curpcb->pcb_cr3));
@@ -554,13 +558,16 @@ vmx_vminit(void)
 	ERROR_ON(vmwrite(VMCS_GUEST_GDTR_BASE, (uint64_t) &gdt[gd->gd_cpuid * NGDT]));
 	ERROR_ON(vmwrite(VMCS_GUEST_IDTR_BASE, (uint64_t) r_idt_arr[gd->gd_cpuid].rd_base));
 
+	ERROR_ON(vmwrite(VMCS_GUEST_RIP, rip));
+	ERROR_ON(vmwrite(VMCS_GUEST_RSP, rsp));
 
-//	ERROR_ON(vmwrite(VMCS_GUEST_IA32_SYSENTER_ESP, rdmsr(MSR_SYSENTER_ESP_MSR)));
-//	ERROR_ON(vmwrite(VMCS_GUEST_IA32_SYSENTER_EIP, rdmsr(MSR_SYSENTER_EIP_MSR)));
 
-//	ERROR_ON(vmwrite(VMCS_HOST_IA32_SYSENTER_EIP, rdmsr(MSR_SYSENTER_EIP_MSR)));
-//	ERROR_ON(vmwrite(VMCS_HOST_IA32_SYSENTER_ESP, rdmsr(MSR_SYSENTER_ESP_MSR)));
-//	ERROR_ON(vmwrite(VMCS_HOST_IA32_SYSENTER_CS, rdmsr(MSR_SYSENTER_CS_MSR)));
+	ERROR_ON(vmwrite(VMCS_GUEST_IA32_SYSENTER_ESP, rdmsr(MSR_SYSENTER_ESP_MSR)));
+	ERROR_ON(vmwrite(VMCS_GUEST_IA32_SYSENTER_EIP, rdmsr(MSR_SYSENTER_EIP_MSR)));
+
+	ERROR_ON(vmwrite(VMCS_HOST_IA32_SYSENTER_EIP, rdmsr(MSR_SYSENTER_EIP_MSR)));
+	ERROR_ON(vmwrite(VMCS_HOST_IA32_SYSENTER_ESP, rdmsr(MSR_SYSENTER_ESP_MSR)));
+	ERROR_ON(vmwrite(VMCS_HOST_IA32_SYSENTER_CS, rdmsr(MSR_SYSENTER_CS_MSR)));
 
 
 
@@ -627,7 +634,8 @@ handle_vmx_vmexit(void)
 			goto error;
 			break;
 		default:
-			kprintf("VMM: handle_vmx_vmexit: unknown exit reason: %d\n", exit_reason);
+			ERROR_ON(vmread(VMCS_EXIT_QUALIFICATION, &val));
+			kprintf("VMM: handle_vmx_vmexit: unknown exit reason: %d with qualification %lld\n", exit_reason, (long long) val);
 			err = -1;
 			goto error;
 			break;

@@ -25,7 +25,7 @@ sys_vmm_guest_ctl(struct vmm_guest_ctl_args *uap)
 		case VMM_GUEST_INIT:
 			kprintf("sys_vmm_guest: VMM_GUEST_INIT op\n");
 
-			error = vmm_vminit();
+			error = vmm_vminit(uap->rip, uap->rsp);
 			if (error) {
 				kprintf("sys_vmm_guest: vmm_vminit failed\n");
 				goto out;

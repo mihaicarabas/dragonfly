@@ -92,13 +92,13 @@ vmm_init(void)
 SYSINIT(vmm, SI_BOOT2_CPU_TOPOLOGY, SI_ORDER_ANY, vmm_init, NULL)
 
 int
-vmm_vminit(void)
+vmm_vminit(uint64_t rip, uint64_t rsp)
 {
 	if (!vmm_enabled) {
 		return ENODEV;
 	}
 
-	return ctl->vminit();
+	return ctl->vminit(rip, rsp);
 }
 
 int
