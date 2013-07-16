@@ -92,13 +92,13 @@ vmm_init(void)
 SYSINIT(vmm, SI_BOOT2_CPU_TOPOLOGY, SI_ORDER_ANY, vmm_init, NULL)
 
 int
-vmm_vminit(uint64_t rip, uint64_t rsp)
+vmm_vminit(struct guest_options *options)
 {
 	if (!vmm_enabled) {
 		return ENODEV;
 	}
 
-	return ctl->vminit(rip, rsp);
+	return ctl->vminit(options);
 }
 
 int
@@ -117,7 +117,6 @@ vmm_vmrun(void)
 	if (!vmm_enabled) {
 		return ENODEV;
 	}
-	kprintf("vmm_vmenter: test\n");
+	kprintf("vmm_vmenter\n");
 	return ctl->vmrun();
 }
-

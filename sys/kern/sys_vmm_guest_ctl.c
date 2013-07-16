@@ -20,17 +20,29 @@ int
 sys_vmm_guest_ctl(struct vmm_guest_ctl_args *uap)
 {
 	int error = 0;
+	struct guest_options options;
 
-	switch (uap->operation) {
+	switch (uap->op) {
 		case VMM_GUEST_INIT:
 			kprintf("sys_vmm_guest: VMM_GUEST_INIT op\n");
+			error = copyin(uap->options, &options, sizeof(struct guest_options));
+			if (error) {
+				kprintf("sys_vmm_guest: error copyin guest_options\n");
+				goto out;
+			}
 
-			error = vmm_vminit(uap->rip, uap->rsp);
+			error = vmm_vminit(&options);
 			if (error) {
 				kprintf("sys_vmm_guest: vmm_vminit failed\n");
 				goto out;
 			}
-			curthread->td_type = TD_TYPE_VMM_GUEST;
+			break;
+		case VMM_GUEST_RUN:
+			error = vmm_vmrun();
+			if (error) {
+				kprintf("sys_vmm_guest: vmm_vmrun failed\n");
+				goto out;
+			}
 			break;
 		default:
 			kprintf("sys_vmm_guest: INVALID op\n");

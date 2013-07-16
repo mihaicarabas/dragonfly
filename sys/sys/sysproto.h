@@ -2293,9 +2293,8 @@ struct	vmm_guest_ctl_args {
 #ifdef _KERNEL
 	struct sysmsg sysmsg;
 #endif
-	int	operation;	char operation_[PAD_(int)];
-	uint64_t	rip;	char rip_[PAD_(uint64_t)];
-	uint64_t	rsp;	char rsp_[PAD_(uint64_t)];
+	int	op;	char op_[PAD_(int)];
+	struct guest_options *	options;	char options_[PAD_(struct guest_options *)];
 };
 
 #ifdef COMPAT_43

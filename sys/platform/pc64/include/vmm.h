@@ -1,7 +1,9 @@
 #ifndef _MACHINE_VMM_H_
 #define _MACHINE_VMM_H_
 
-int vmm_vminit(uint64_t rip, uint64_t rsp);
+#include <sys/vmm_guest_ctl.h>
+
+int vmm_vminit(struct guest_options*);
 int vmm_vmdestroy(void);
 int vmm_vmrun(void);
 
