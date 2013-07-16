@@ -118,7 +118,6 @@ static int svm_disable(void) {
  *	to usermode via svm_vmrun().
  */
 static int svm_vminit(struct guest_options *options) {
-{
 	return (ENODEV);
 }
 
