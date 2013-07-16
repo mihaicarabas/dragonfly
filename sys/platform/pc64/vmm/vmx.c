@@ -5,6 +5,7 @@
 #include <sys/thread.h>
 #include <sys/thread2.h>
 #include <sys/sysctl.h>
+#include <sys/vmm_guest_ctl.h>
 
 #include <machine/cpufunc.h>
 #include <machine/cputypes.h>
@@ -459,7 +460,7 @@ vmx_disable(void)
 }
 
 static int
-vmx_vminit(uint64_t rip, uint64_t rsp)
+vmx_vminit(struct guest_options *options)
 {
 	struct vmx_thread_info * vti;
 	int err;
@@ -539,14 +540,14 @@ vmx_vminit(uint64_t rip, uint64_t rsp)
 	ERROR_ON(vmwrite(VMCS_GUEST_CS_SELECTOR, GSEL(GUCODE_SEL, SEL_UPL)));
 	ERROR_ON(vmwrite(VMCS_GUEST_TR_SELECTOR, GSEL(GPROC0_SEL, SEL_UPL))); /* TODO */
 
-	ERROR_ON(vmwrite(VMCS_GUEST_ES_ACCESS_RIGHTS, 0x000000F3));
-	ERROR_ON(vmwrite(VMCS_GUEST_CS_ACCESS_RIGHTS, 0x000020FB));
-	ERROR_ON(vmwrite(VMCS_GUEST_SS_ACCESS_RIGHTS, 0x000000F3));
-	ERROR_ON(vmwrite(VMCS_GUEST_DS_ACCESS_RIGHTS, 0x000000F3));
-	ERROR_ON(vmwrite(VMCS_GUEST_FS_ACCESS_RIGHTS, 0x000000F3));
-	ERROR_ON(vmwrite(VMCS_GUEST_GS_ACCESS_RIGHTS, 0x000000F3));
-	ERROR_ON(vmwrite(VMCS_GUEST_LDTR_ACCESS_RIGHTS, 0x00010000));
-	ERROR_ON(vmwrite(VMCS_GUEST_TR_ACCESS_RIGHTS, 0x0000008B));
+	ERROR_ON(vmwrite(VMCS_GUEST_ES_ACCESS_RIGHTS, VMCS_SEG_TYPE(3) | VMCS_S | VMCS_DPL(SEL_UPL) | VMCS_P));
+	ERROR_ON(vmwrite(VMCS_GUEST_CS_ACCESS_RIGHTS, VMCS_SEG_TYPE(11) | VMCS_S | VMCS_DPL(SEL_UPL) | VMCS_P | VMCS_L));
+	ERROR_ON(vmwrite(VMCS_GUEST_SS_ACCESS_RIGHTS, VMCS_SEG_TYPE(3) | VMCS_S | VMCS_DPL(SEL_UPL) | VMCS_P));
+	ERROR_ON(vmwrite(VMCS_GUEST_DS_ACCESS_RIGHTS, VMCS_SEG_TYPE(3) | VMCS_S | VMCS_DPL(SEL_UPL) | VMCS_P));
+	ERROR_ON(vmwrite(VMCS_GUEST_FS_ACCESS_RIGHTS, VMCS_SEG_TYPE(3) | VMCS_S | VMCS_DPL(SEL_UPL) | VMCS_P));
+	ERROR_ON(vmwrite(VMCS_GUEST_GS_ACCESS_RIGHTS, VMCS_SEG_TYPE(3) | VMCS_S | VMCS_DPL(SEL_UPL) | VMCS_P));
+	ERROR_ON(vmwrite(VMCS_GUEST_LDTR_ACCESS_RIGHTS, VMCS_SEG_UNUSABLE));
+	ERROR_ON(vmwrite(VMCS_GUEST_TR_ACCESS_RIGHTS, VMCS_SEG_TYPE(11) | VMCS_P));
 
 	ERROR_ON(vmwrite(VMCS_GUEST_CR0, (CR0_PE | CR0_PG | cr0_fixed_to_1) & ~cr0_fixed_to_0));
 	ERROR_ON(vmwrite(VMCS_GUEST_CR4, (CR4_PAE | cr4_fixed_to_1) & ~ cr4_fixed_to_0));
@@ -561,8 +562,8 @@ vmx_vminit(uint64_t rip, uint64_t rsp)
 	ERROR_ON(vmwrite(VMCS_GUEST_GDTR_BASE, (uint64_t) &gdt[gd->gd_cpuid * NGDT]));
 	ERROR_ON(vmwrite(VMCS_GUEST_IDTR_BASE, (uint64_t) r_idt_arr[gd->gd_cpuid].rd_base));
 
-	ERROR_ON(vmwrite(VMCS_GUEST_RIP, rip));
-	ERROR_ON(vmwrite(VMCS_GUEST_RSP, rsp));
+	ERROR_ON(vmwrite(VMCS_GUEST_RIP, options->ip));
+	ERROR_ON(vmwrite(VMCS_GUEST_RSP, options->sp));
 
 
 	ERROR_ON(vmwrite(VMCS_GUEST_IA32_SYSENTER_ESP, rdmsr(MSR_SYSENTER_ESP_MSR)));
@@ -717,6 +718,7 @@ restart:
 		goto restart;
 
 	} else {
+		vti->launched = 0;
 		if (ret == VM_FAIL_VALID) {
 			vmread(VMCS_INSTR_ERR, &val);
 			err = (int) val;

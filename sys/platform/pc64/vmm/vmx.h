@@ -267,5 +267,16 @@ void vmx_vmexit(void);
 #define		EXIT_REASON_INVPCID		58
 #define		EXIT_REASON_VMFUNC		59
 
+/* Table 24-2. Format of Access Rights */
+#define		VMCS_SEG_TYPE(x)	(x)
+#define		VMCS_S			(1 << 4)	/* Descriptor type - 0 = system; 1 = code or data */
+#define		VMCS_DPL(x)		(x << 5)	/* Descriptor Privilege Level */
+#define		VMCS_P			(1 << 7)	/* Segment present*/
+#define		VMCS_AVL		(1 << 12)	/* Available for use by system software */
+#define		VMCS_L			(1 << 13)	/* 64-bit mode active (for CS only) */
+#define		VMCS_OP_SIZE		(1 << 14)	/* Default operation size (0 = 16-bit segment; 1 = 32-bit segment) */
+#define		VMCS_G			(1 << 15)	/* Granularity */
+#define		VMCS_SEG_UNUSABLE	(1 << 16)	/* Segment unusable (0 = usable; 1 = unusable) */
+
 
 #endif
