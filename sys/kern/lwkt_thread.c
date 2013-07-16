@@ -70,7 +70,6 @@
 
 #include <machine/stdarg.h>
 #include <machine/smp.h>
-#include <machine/vmm.h>
 
 #if !defined(KTR_CTXSW)
 #define KTR_CTXSW KTR_ALL
@@ -503,11 +502,6 @@ lwkt_free_thread(thread_t td)
 	kmem_free(&kernel_map, (vm_offset_t)td->td_kstack, td->td_kstack_size);
 	td->td_kstack = NULL;
 	td->td_kstack_size = 0;
-    }
-
-    /* If VMM guest thread, destroy VMM data */
-    if (td->td_type == TD_TYPE_VMM_GUEST) {
-	vmm_vmdestroy();
     }
 
     KTR_LOG(ctxsw_deadtd, td);

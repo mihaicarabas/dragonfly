@@ -380,7 +380,6 @@ struct thread {
 #define TD_TYPE_GENERIC		0		/* generic thread */
 #define TD_TYPE_CRYPTO		1		/* crypto thread */
 #define TD_TYPE_NETISR		2		/* netisr thread */
-#define TD_TYPE_VMM_GUEST	3		/* VM guest thread */
 
 /*
  * Thread priorities.  Typically only one thread from any given
