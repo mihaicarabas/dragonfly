@@ -9,7 +9,7 @@
 
 #define		VMM_GUEST_INIT		0
 #define		VMM_GUEST_RUN		1
-#define		VMM_GUEST_DESTROY	1
+#define		VMM_GUEST_DESTROY	2
 
 #include <sys/types.h>
 
