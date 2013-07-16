@@ -276,12 +276,6 @@ vmx_init(void)
 	vmx_set_default_settings(&vmx_exit);
 	vmx_set_default_settings(&vmx_entry);
 
-	kprintf("pinbased ctl: %llu; msr %llu, truemsg %llu\n", (unsigned long long) vmx_pinbased.ctls, (unsigned long long) rdmsr(vmx_pinbased.msr_addr), (unsigned long long) rdmsr(vmx_pinbased.msr_true_addr));
-	kprintf("procbased ctl: %llu; msr %llu, truemsg %llu\n", (unsigned long long) vmx_procbased.ctls, (unsigned long long) rdmsr(vmx_procbased.msr_addr), (unsigned long long) rdmsr(vmx_procbased.msr_true_addr));
-	kprintf("procbased2 ctl: %llu; msr %llu, truemsg %llu\n", (unsigned long long) vmx_procbased2.ctls, (unsigned long long) rdmsr(vmx_procbased2.msr_addr), (unsigned long long) rdmsr(vmx_procbased2.msr_true_addr));
-	kprintf("exit ctl: %llu; msr %llu, truemsg %llu\n", (unsigned long long) vmx_exit.ctls, (unsigned long long) rdmsr(vmx_exit.msr_addr), (unsigned long long) rdmsr(vmx_exit.msr_true_addr));
-	kprintf("entry ctl: %llu; msr %llu, truemsg %llu\n", (unsigned long long) vmx_entry.ctls, (unsigned long long) rdmsr(vmx_entry.msr_addr), (unsigned long long) rdmsr(vmx_entry.msr_true_addr));
-
 	/* Enable second level for procbased */
 	err = vmx_set_ctl_setting(&vmx_procbased,
 	    PROCBASED_ACTIVATE_SECONDARY_CONTROLS,
@@ -291,12 +285,22 @@ vmx_init(void)
 		return (ENODEV);
 	}
 
+	/* Set 64bits mode for GUEST */
+	err = vmx_set_ctl_setting(&vmx_entry,
+	    VMENTRY_IA32e_MODE_GUEST,
+	    ONE);
+	if (err) {
+		kprintf("VMM: VMENTRY_IA32e_MODE_GUEST not supported by this CPU\n");
+		return (ENODEV);
+	}
+
+
 	/* Set 64bits mode */
 	err = vmx_set_ctl_setting(&vmx_exit,
 	    VMEXIT_HOST_ADDRESS_SPACE_SIZE,
 	    ONE);
 	if (err) {
-		kprintf("VMM: PROCBASED_ACTIVATE_SECONDARY_CONTROLS not supported by this CPU\n");
+		kprintf("VMM: VMEXIT_HOST_ADDRESS_SPACE_SIZE not supported by this CPU\n");
 		return (ENODEV);
 	}
 
@@ -329,7 +333,8 @@ vmx_init(void)
 		kprintf("VMM: VMX is disable by the BIOS\n");
 		return (EINVAL);
 	}
-	
+
+//	wrmsr(IA32_FEATURE_CONTROL, feature_control | BIT(FEATURE_CONTROL_LOCKED) |  BIT(FEATURE_CONTROL_VMX_BIOS_ENABLED));
 	vmx_basic_value = rdmsr(IA32_VMX_BASIC);
 	vmx_width_addr = (uint8_t) VMX_WIDTH_ADDR(vmx_basic_value);
 	vmx_region_size = (uint32_t) VMX_REGION_SIZE(vmx_basic_value);
@@ -492,7 +497,7 @@ vmx_vminit(uint64_t rip, uint64_t rsp)
 	/* Load HOST EFER and PAT */
 	ERROR_ON(vmwrite(VMCS_HOST_IA32_PAT, rdmsr(MSR_PAT)));
 	ERROR_ON(vmwrite(VMCS_HOST_IA32_EFER, rdmsr(MSR_EFER)));
-
+	
 	/* Load HOST selectors */
 	ERROR_ON(vmwrite(VMCS_HOST_ES_SELECTOR, GSEL(GDATA_SEL, SEL_KPL)));
 	ERROR_ON(vmwrite(VMCS_HOST_SS_SELECTOR, GSEL(GDATA_SEL, SEL_KPL)));
@@ -534,19 +539,17 @@ vmx_vminit(uint64_t rip, uint64_t rsp)
 	ERROR_ON(vmwrite(VMCS_GUEST_CS_SELECTOR, GSEL(GUCODE_SEL, SEL_UPL)));
 	ERROR_ON(vmwrite(VMCS_GUEST_TR_SELECTOR, GSEL(GPROC0_SEL, SEL_UPL))); /* TODO */
 
-	ERROR_ON(vmwrite(VMCS_GUEST_ES_ACCESS_RIGHTS, 0x00000093));
-	ERROR_ON(vmwrite(VMCS_GUEST_CS_ACCESS_RIGHTS, 0x0000209B));
-	ERROR_ON(vmwrite(VMCS_GUEST_SS_ACCESS_RIGHTS, 0x00000093));
-	ERROR_ON(vmwrite(VMCS_GUEST_DS_ACCESS_RIGHTS, 0x00000093));
-	ERROR_ON(vmwrite(VMCS_GUEST_FS_ACCESS_RIGHTS, 0x00000093));
-	ERROR_ON(vmwrite(VMCS_GUEST_GS_ACCESS_RIGHTS, 0x00000093));
+	ERROR_ON(vmwrite(VMCS_GUEST_ES_ACCESS_RIGHTS, 0x000000F3));
+	ERROR_ON(vmwrite(VMCS_GUEST_CS_ACCESS_RIGHTS, 0x000020FB));
+	ERROR_ON(vmwrite(VMCS_GUEST_SS_ACCESS_RIGHTS, 0x000000F3));
+	ERROR_ON(vmwrite(VMCS_GUEST_DS_ACCESS_RIGHTS, 0x000000F3));
+	ERROR_ON(vmwrite(VMCS_GUEST_FS_ACCESS_RIGHTS, 0x000000F3));
+	ERROR_ON(vmwrite(VMCS_GUEST_GS_ACCESS_RIGHTS, 0x000000F3));
 	ERROR_ON(vmwrite(VMCS_GUEST_LDTR_ACCESS_RIGHTS, 0x00010000));
 	ERROR_ON(vmwrite(VMCS_GUEST_TR_ACCESS_RIGHTS, 0x0000008B));
 
 	ERROR_ON(vmwrite(VMCS_GUEST_CR0, (CR0_PE | CR0_PG | cr0_fixed_to_1) & ~cr0_fixed_to_0));
 	ERROR_ON(vmwrite(VMCS_GUEST_CR4, (CR4_PAE | cr4_fixed_to_1) & ~ cr4_fixed_to_0));
-	kprintf("VMM: GUEST: CR0: %llx\n", (long long) (CR0_PE | CR0_PG | cr0_fixed_to_1) & ~cr0_fixed_to_0);
-	kprintf("VMM: GUEST: CR4: %llx\n", (long long) (CR4_PAE | cr4_fixed_to_1) & ~cr4_fixed_to_0);
 
 	ERROR_ON(vmwrite(VMCS_GUEST_RFLAGS, 0x02));
 
@@ -579,6 +582,7 @@ vmx_vminit(uint64_t rip, uint64_t rsp)
 	ERROR_ON(vmwrite(VMCS_LINK_POINTER, ~0ULL));
 
 	/* Initialized on this CPU */
+	vti->launched = 0;
 	vti->last_cpu = gd->gd_cpuid;
 	pcpu_info[gd->gd_cpuid].loaded_vmcs = vti->vmcs_region;
 
@@ -701,7 +705,7 @@ restart:
 
 	} else { /* vmlaunch */
 		kprintf("VMM: vmx_vmrun: vmx_launch\n");
-		vti->launched = 0;
+		vti->launched = 1;
 		ret = vmx_launch(vti);
 	}
 

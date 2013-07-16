@@ -190,7 +190,7 @@ void vmx_vmexit(void);
  * Table 24-12. Definitions of VM-Entry Controls
  */
 #define		VMENTRY_LOAD_DEBUG_CONTROLS		2
-#define		VMENTRY_IA32e_mode_guest		9
+#define		VMENTRY_IA32e_MODE_GUEST		9
 #define		VMENTRY_ENTRY_TO_SMM			10
 #define		VMENTRY_DEACTIVATE_DUAL_MONITOR		11
 #define		VMENTRY_LOAD_IA32_PERF_GLOBAL_CTRL	13
