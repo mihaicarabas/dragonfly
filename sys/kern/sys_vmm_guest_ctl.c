@@ -50,6 +50,7 @@ sys_vmm_guest_ctl(struct vmm_guest_ctl_args *uap)
 				kprintf("sys_vmm_guest: vmm_vmdestroy failed\n");
 				goto out;
 			}
+			break;
 		default:
 			kprintf("sys_vmm_guest: INVALID op\n");
 			error = EINVAL;
