@@ -1,6 +1,7 @@
 #include <sys/systm.h>
 #include <sys/malloc.h>
 #include <sys/thread.h>
+#include <sys/vmm_guest_ctl.h>
 
 #include <vm/pmap.h>
 
@@ -14,8 +15,8 @@
 static int svm_available = 0;
 static int svm_enabled = 0;
 
-static int svm_rvi_available = 0;
-static int svm_vmcb_caching_available = 0;
+//static int svm_rvi_available = 0;
+//static int svm_vmcb_caching_available = 0;
 
 static vm_offset_t vm_hsave_va[MAXCPU];
 
