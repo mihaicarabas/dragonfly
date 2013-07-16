@@ -210,17 +210,6 @@ doreti_next:
 	.globl	doreti_iret
 	.globl	doreti_syscall_ret
 doreti_syscall_ret:
-
-	/* VMM calling code */
-vmm:
-	cmpl $1, CNAME(vmm_enabled)	/* check if vmm is enabled */
-	jnz vmm_disabled
-
-	cmpl $TD_TYPE_VMM_GUEST, TD_TYPE(%rbx)	/* is thread of type VMM_GUEST */
-	jnz vmm_disabled
-	call vmm_vmrun
-vmm_disabled:
-
 	POP_FRAME		/* registers and %gs (+cli) */
 	/* WARNING: special global doreti_iret is  also used by exception.S */
 doreti_iret:
