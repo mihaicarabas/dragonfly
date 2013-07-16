@@ -18,7 +18,8 @@ void test() {
 	int c;
 	int d;
 	int e;
-	printf("%x %x %x %x %x\n", &a, &b, &c, &d, &e);
+//	printf("%x %x %x %x %x\n", &a, &b, &c, &d, &e);
+	__asm __volatile ("vmlaunch");
 
 }
 int
@@ -30,6 +31,8 @@ main(void)
 	int enable = 0;
 	int enabl2 = 0;
 	void *stack;
+	struct guest_options options;
+
 //	sysctlnametomib("hw.vmm.enable", mib, &len);
 //	test();
 //	error = vmm_guest_ctl(100);
@@ -50,7 +53,18 @@ main(void)
 //	if (sysctl(mib, 3, NULL, NULL, &enable, sizeof(int)) == -1)
 //		perror("sysctl");
 	posix_memalign(&stack, PAGE_SIZE, 64 * PAGE_SIZE);
-	error = vmm_guest_ctl(VMM_GUEST_INIT, (uint64_t) test, (uint64_t) stack);
+	options.ip = (register_t) test;
+	options.sp = (register_t) stack;
+
+	error = vmm_guest_ctl(VMM_GUEST_INIT, &options);
 	vmm_printf(VMM_GUEST_INIT, error, 0);
+
+	error = vmm_guest_ctl(VMM_GUEST_RUN, NULL);
+	vmm_printf(VMM_GUEST_RUN, error, 0);
+
+	error = vmm_guest_ctl(VMM_GUEST_DESTROY, NULL);
+	vmm_printf(VMM_GUEST_RUN, error, 0);
+
+
 	return 0;
 }
