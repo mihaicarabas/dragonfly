@@ -6,12 +6,14 @@
 #include <sys/thread2.h>
 #include <sys/sysctl.h>
 #include <sys/vmm_guest_ctl.h>
+#include <sys/proc.h>
 
 #include <machine/cpufunc.h>
 #include <machine/cputypes.h>
 #include <machine/specialreg.h>
 #include <machine/smp.h>
 #include <machine/globaldata.h>
+#include <machine/trap.h>
 
 #include "vmm.h"
 
@@ -21,12 +23,14 @@
 
 #define ERROR_ON(func)					\
 	do {						\
-	if ((err = func)) {				\
+	if ((err = (func))) {				\
 		kprintf("VMM: %s error at line: %d\n",	\
 		   __func__, __LINE__);			\
 		goto error;				\
 	}						\
 	} while(0)					\
+
+extern void trap(struct trapframe *frame);
 
 struct vmx_ctl_info vmx_pinbased = {
 	.msr_addr = IA32_VMX_PINBASED_CTLS,
@@ -481,6 +485,8 @@ vmx_vminit(struct guest_options *options)
 	/* vmclear the vmcs to initialize it */
 	ERROR_ON(vmclear(vti->vmcs_region));
 
+	crit_enter();
+
 	/* Make this the current VMCS */
 	ERROR_ON(vmptrld(vti->vmcs_region));
 
@@ -552,7 +558,7 @@ vmx_vminit(struct guest_options *options)
 	ERROR_ON(vmwrite(VMCS_GUEST_CR0, (CR0_PE | CR0_PG | cr0_fixed_to_1) & ~cr0_fixed_to_0));
 	ERROR_ON(vmwrite(VMCS_GUEST_CR4, (CR4_PAE | cr4_fixed_to_1) & ~ cr4_fixed_to_0));
 
-	ERROR_ON(vmwrite(VMCS_GUEST_RFLAGS, 0x02));
+	ERROR_ON(vmwrite(VMCS_GUEST_RFLAGS, PSL_I | 0x02));
 
 	ERROR_ON(vmwrite(VMCS_GUEST_CR3, (uint64_t) curpcb->pcb_cr3));
 
@@ -562,8 +568,11 @@ vmx_vminit(struct guest_options *options)
 	ERROR_ON(vmwrite(VMCS_GUEST_GDTR_BASE, (uint64_t) &gdt[gd->gd_cpuid * NGDT]));
 	ERROR_ON(vmwrite(VMCS_GUEST_IDTR_BASE, (uint64_t) r_idt_arr[gd->gd_cpuid].rd_base));
 
+	/* Guest RIP and RSP */
 	ERROR_ON(vmwrite(VMCS_GUEST_RIP, options->ip));
 	ERROR_ON(vmwrite(VMCS_GUEST_RSP, options->sp));
+
+
 
 
 	ERROR_ON(vmwrite(VMCS_GUEST_IA32_SYSENTER_ESP, rdmsr(MSR_SYSENTER_ESP_MSR)));
@@ -589,8 +598,19 @@ vmx_vminit(struct guest_options *options)
 
 	curthread->td_vmm = (void*) vti;
 
+	crit_exit();
+
+	/* Guest trapframe */
+	vti->guest.tf_rip = options->ip;
+	vti->guest.tf_cs = GSEL(GUCODE_SEL, SEL_UPL);
+	vti->guest.tf_rflags = PSL_I | 0x02;
+	vti->guest.tf_rsp = options->sp;
+	vti->guest.tf_ss = GSEL(GUDATA_SEL, SEL_UPL);
+
 	return 0;
 error:
+	crit_exit();
+
 	kprintf("VMM: vmx_vminit failed\n");
 
 	kfree(vti->vmcs_region_na, M_TEMP);
@@ -619,13 +639,16 @@ vmx_vmdestroy(void)
 static int
 handle_vmx_vmexit(void)
 {
-	uint64_t val;
+	struct vmx_thread_info * vti;
 	int exit_reason;
 	int err;
 
-	ERROR_ON(vmread(VMCS_VMEXIT_REASON, &val));
+	kprintf("VMM: handle_vmx_vmexit\n");
 
-	exit_reason = VMCS_BASIC_EXIT_REASON(val);
+	vti = (struct vmx_thread_info *) curthread->td_vmm;
+	ERROR_ON(vti == NULL);
+
+	exit_reason = VMCS_BASIC_EXIT_REASON(vti->vmexit_reason);
 
 	switch (exit_reason) {
 		case EXIT_REASON_EXCEPTION:
@@ -639,8 +662,8 @@ handle_vmx_vmexit(void)
 			goto error;
 			break;
 		default:
-			ERROR_ON(vmread(VMCS_EXIT_QUALIFICATION, &val));
-			kprintf("VMM: handle_vmx_vmexit: unknown exit reason: %d with qualification %lld\n", exit_reason, (long long) val);
+			kprintf("VMM: handle_vmx_vmexit: unknown exit reason: %d with qualification %lld\n",
+			    exit_reason, (long long) vti->vmexit_qualification);
 			err = -1;
 			goto error;
 			break;
@@ -660,14 +683,26 @@ vmx_vmrun(void)
 	int err;
 	int ret;
 	uint64_t val;
+//	struct trapframe *tmp;
 restart:
+	cpu_disable_intr();
 	gd = mycpu;
 	vti = (struct vmx_thread_info *) curthread->td_vmm;
+	ERROR_ON(vti == NULL);
 
-	if(vti == NULL ){
-		kprintf("VMM: vmx_vmrum vti is NULL\n");
-		return -1;
+	splz();
+	if (gd->gd_reqflags & RQF_AST_MASK) {
+//		tmp = curthread->td_lwp->lwp_md.md_regs;
+//		curthread->td_lwp->lwp_md.md_regs = &vti->guest;
+//		vti->guest.tf_trapno = T_ASTFLT;
+//		cpu_enable_intr();
+//		trap(&vti->guest);
+//		vti->guest.tf_trapno = ~T_ASTFLT;
+//		curthread->td_lwp->lwp_md.md_regs = tmp;
+		kprintf("VMM: vmx_vmrun ASTFLTs\n");
+//		goto restart;
 	}
+
 
 	if (vti->last_cpu != gd->gd_cpuid) {
 		kprintf("VMM: vmx_vmrun CPU changed\n");
@@ -711,7 +746,17 @@ restart:
 	}
 
 	if (ret == VM_EXIT) {
-		kprintf("VMM: vmx_vmrun: VM_EXIT issued\n");
+		ERROR_ON(vmread(VMCS_VMEXIT_REASON, &vti->vmexit_reason));
+		ERROR_ON(vmread(VMCS_EXIT_QUALIFICATION, &vti->vmexit_qualification));
+
+		ERROR_ON(vmread(VMCS_GUEST_RIP, &vti->guest.tf_rip));
+		ERROR_ON(vmread(VMCS_GUEST_CS_SELECTOR, &vti->guest.tf_cs));
+		ERROR_ON(vmread(VMCS_GUEST_RFLAGS, &vti->guest.tf_rflags));
+		ERROR_ON(vmread(VMCS_GUEST_RSP, &vti->guest.tf_rsp));
+		ERROR_ON(vmread(VMCS_GUEST_SS_SELECTOR, &vti->guest.tf_ss));
+
+		cpu_enable_intr();
+
 		if (handle_vmx_vmexit())
 			goto done;
 		/* We handled the VMEXIT reason and continue with VM execution */
@@ -733,6 +778,7 @@ done:
 	return 0;
 
 error:
+	cpu_enable_intr();
 	kprintf("VMM: vmx_vmrun failed\n");
 	return err;
 }
