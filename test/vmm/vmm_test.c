@@ -63,7 +63,7 @@ main(void)
 	vmm_printf(VMM_GUEST_RUN, error, 0);
 
 	error = vmm_guest_ctl(VMM_GUEST_DESTROY, NULL);
-	vmm_printf(VMM_GUEST_RUN, error, 0);
+	vmm_printf(VMM_GUEST_DESTROY, error, 0);
 
 
 	return 0;
