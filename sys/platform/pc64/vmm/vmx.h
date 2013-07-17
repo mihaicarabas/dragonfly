@@ -30,24 +30,12 @@ struct vmx_pcpu_info {
 struct vmx_thread_info {
 	unsigned char *vmcs_region_na;
 	unsigned char *vmcs_region;
+
 	int launched;
 	int last_cpu;
+
 	/* Guest unsaved registers in VMCS */
-	register_t	guest_rax;
-	register_t	guest_rbx;
-	register_t	guest_rcx;
-	register_t	guest_rdx;
-	register_t	guest_rsi;
-	register_t	guest_rdi;
-	register_t	guest_rbp;
-	register_t	guest_r8;
-	register_t	guest_r9;
-	register_t	guest_r10;
-	register_t	guest_r11;
-	register_t	guest_r12;
-	register_t	guest_r13;
-	register_t	guest_r14;
-	register_t	guest_r15;
+	struct trapframe guest; /* put them directly in trapframe */
 	register_t	guest_cr2;
 
 	/* Host unsaved registers in VMCS */
@@ -60,6 +48,8 @@ struct vmx_thread_info {
 	register_t	host_r14;
 	register_t	host_r15;
 	register_t	host_rsp;
+	uint64_t vmexit_reason;
+	uint64_t vmexit_qualification;
 
 };
 
