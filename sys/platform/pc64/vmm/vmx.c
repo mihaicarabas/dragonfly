@@ -683,7 +683,7 @@ vmx_vmrun(void)
 	int err;
 	int ret;
 	uint64_t val;
-//	struct trapframe *tmp;
+	struct trapframe *tmp;
 restart:
 	cpu_disable_intr();
 	gd = mycpu;
@@ -692,15 +692,15 @@ restart:
 
 	splz();
 	if (gd->gd_reqflags & RQF_AST_MASK) {
-//		tmp = curthread->td_lwp->lwp_md.md_regs;
-//		curthread->td_lwp->lwp_md.md_regs = &vti->guest;
-//		vti->guest.tf_trapno = T_ASTFLT;
-//		cpu_enable_intr();
-//		trap(&vti->guest);
-//		vti->guest.tf_trapno = ~T_ASTFLT;
-//		curthread->td_lwp->lwp_md.md_regs = tmp;
+		atomic_clear_int(&gd->gd_reqflags, RQF_AST_SIGNAL);
+		tmp = curthread->td_lwp->lwp_md.md_regs;
+		curthread->td_lwp->lwp_md.md_regs = &vti->guest;
+		vti->guest.tf_trapno = T_ASTFLT;
+		cpu_enable_intr();
+		trap(&vti->guest);
+		curthread->td_lwp->lwp_md.md_regs = tmp;
 		kprintf("VMM: vmx_vmrun ASTFLTs\n");
-//		goto restart;
+		goto restart;
 	}
 
 
