@@ -8,7 +8,7 @@
 
 #include <sys/thread2.h>
 #include <sys/spinlock2.h>
-
+#include <machine/cpu.h>
 #include <machine/vmm.h>
 
 /*
@@ -21,7 +21,7 @@ sys_vmm_guest_ctl(struct vmm_guest_ctl_args *uap)
 {
 	int error = 0;
 	struct guest_options options;
-
+	clear_quickret();
 	switch (uap->op) {
 		case VMM_GUEST_INIT:
 			kprintf("sys_vmm_guest: VMM_GUEST_INIT op\n");
@@ -38,6 +38,8 @@ sys_vmm_guest_ctl(struct vmm_guest_ctl_args *uap)
 			}
 			break;
 		case VMM_GUEST_RUN:
+			kprintf("sys_vmm_guest: VMM_GUEST_RUN op\n");
+
 			error = vmm_vmrun();
 			if (error) {
 				kprintf("sys_vmm_guest: vmm_vmrun failed\n");
@@ -45,6 +47,8 @@ sys_vmm_guest_ctl(struct vmm_guest_ctl_args *uap)
 			}
 			break;
 		case VMM_GUEST_DESTROY:
+			kprintf("sys_vmm_guest: VMM_GUEST_DESTROY op\n");
+
 			error = vmm_vmdestroy();
 			if (error) {
 				kprintf("sys_vmm_guest: vmm_vmdestroy failed\n");
