@@ -584,16 +584,6 @@ vmx_vminit(struct guest_options *options)
 	ERROR_ON(vmwrite(VMCS_GUEST_RIP, options->ip));
 	ERROR_ON(vmwrite(VMCS_GUEST_RSP, options->sp));
 
-
-	ERROR_ON(vmwrite(VMCS_GUEST_IA32_SYSENTER_ESP, rdmsr(MSR_SYSENTER_ESP_MSR)));
-	ERROR_ON(vmwrite(VMCS_GUEST_IA32_SYSENTER_EIP, rdmsr(MSR_SYSENTER_EIP_MSR)));
-
-	ERROR_ON(vmwrite(VMCS_HOST_IA32_SYSENTER_EIP, rdmsr(MSR_SYSENTER_EIP_MSR)));
-	ERROR_ON(vmwrite(VMCS_HOST_IA32_SYSENTER_ESP, rdmsr(MSR_SYSENTER_ESP_MSR)));
-	ERROR_ON(vmwrite(VMCS_HOST_IA32_SYSENTER_CS, rdmsr(MSR_SYSENTER_CS_MSR)));
-
-
-
 	/*
 	 * This field is included for future expansion.
 	 * Software should set this field to FFFFFFFF_FFFFFFFFH
@@ -668,6 +658,12 @@ handle_vmx_vmexit(void)
 			break;
 		case EXIT_REASON_EXT_INTR:
 			kprintf("VMM: handle_vmx_vmexit: EXIT_REASON_EXT_INTR with qualification %lld\n",
+			    (long long) vti->vmexit_qualification);
+//			err = -1;
+//			goto error;
+			break;
+		case EXIT_REASON_VMLAUNCH:
+			kprintf("VMM: handle_vmx_vmexit: EXIT_REASON_VMLAUNCH with qualification %lld\n",
 			    (long long) vti->vmexit_qualification);
 //			err = -1;
 //			goto error;
