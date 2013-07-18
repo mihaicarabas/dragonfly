@@ -50,6 +50,7 @@ struct vmx_thread_info {
 	register_t	host_rsp;
 	uint64_t vmexit_reason;
 	uint64_t vmexit_qualification;
+	uint64_t vmexit_interruption_info;
 
 };
 

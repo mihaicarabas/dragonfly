@@ -580,6 +580,8 @@ vmx_vminit(struct guest_options *options)
 	ERROR_ON(vmwrite(VMCS_GUEST_GS_BASE, (uint64_t) curpcb->pcb_gsbase)); /* mycpu points to %gs:0 */
 	ERROR_ON(vmwrite(VMCS_GUEST_FS_BASE, (uint64_t) curpcb->pcb_fsbase));
 
+	ERROR_ON(vmwrite(VMCS_EXCEPTION_BITMAP,(uint64_t) 0xFFFFFFFF));
+
 	/* Guest RIP and RSP */
 	ERROR_ON(vmwrite(VMCS_GUEST_RIP, options->ip));
 	ERROR_ON(vmwrite(VMCS_GUEST_RSP, options->sp));
@@ -651,8 +653,8 @@ handle_vmx_vmexit(void)
 
 	switch (exit_reason) {
 		case EXIT_REASON_EXCEPTION:
-			kprintf("VMM: handle_vmx_vmexit: EXIT_REASON_EXCEPTION with qualification %lld\n",
-			    (long long) vti->vmexit_qualification);
+			kprintf("VMM: handle_vmx_vmexit: EXIT_REASON_EXCEPTION with qualification %llx\n, interruption info %llx",
+			    (long long) vti->vmexit_qualification, (long long) vti->vmexit_interruption_info);
 			err = -1;
 			goto error;
 			break;
@@ -769,6 +771,7 @@ restart:
 	if (ret == VM_EXIT) {
 		ERROR_ON(vmread(VMCS_VMEXIT_REASON, &vti->vmexit_reason));
 		ERROR_ON(vmread(VMCS_EXIT_QUALIFICATION, &vti->vmexit_qualification));
+		ERROR_ON(vmread(VMCS_VMEXIT_INTERRUPTION_INFO, &vti->vmexit_interruption_info));
 
 		ERROR_ON(vmread(VMCS_GUEST_RIP, &vti->guest.tf_rip));
 		ERROR_ON(vmread(VMCS_GUEST_CS_SELECTOR, &vti->guest.tf_cs));
