@@ -934,6 +934,7 @@ kern/sys_generic.c	standard
 kern/sys_pipe.c		standard
 kern/sys_process.c	standard
 kern/subr_rman.c	standard
+kern/subr_unit.c	standard
 kern/sys_mqueue.c	standard
 kern/sys_socket.c	standard
 kern/sysv_ipc.c		standard
@@ -1832,6 +1833,7 @@ libkern/mcount.c			optional	profiling-routine
 libkern/memmove.c			standard
 libkern/memcchr.c			standard
 libkern/qsort.c				standard
+libkern/qsort_r.c			standard
 libkern/random.c			standard
 libkern/rindex.c			standard
 libkern/scanc.c				standard

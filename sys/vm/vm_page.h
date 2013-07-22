@@ -163,7 +163,7 @@ struct vm_page {
 	u_short	pc;			/* page color */
 	u_char	act_count;		/* page usage count */
 	u_char	busy;			/* page busy count */
-	u_char	unused01;
+	u_char	pat_mode;		/* hardware page attribute */
 	u_char	unused02;
 	u_int32_t flags;		/* see below */
 	u_int	wire_count;		/* wired down maps refs (P) */
@@ -272,6 +272,10 @@ struct vpgqueues {
 };
 
 extern struct vpgqueues vm_page_queues[PQ_COUNT];
+
+#define	PA_LOCKPTR(pa)	&pa_lock[pa_index((pa)) % PA_LOCK_COUNT].data
+
+#define	vm_page_lockptr(m)	(PA_LOCKPTR(VM_PAGE_TO_PHYS((m))))
 
 /*
  * These are the flags defined for vm_page.
@@ -463,6 +467,7 @@ void vm_page_remove (vm_page_t);
 void vm_page_rename (vm_page_t, struct vm_object *, vm_pindex_t);
 void vm_page_startup (void);
 void vm_page_unmanage (vm_page_t);
+void vm_page_unhold_pages(vm_page_t *ma, int count);
 void vm_page_unwire (vm_page_t, int);
 void vm_page_wire (vm_page_t);
 void vm_page_unqueue (vm_page_t);

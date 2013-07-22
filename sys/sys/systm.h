@@ -242,7 +242,9 @@ int	copystr (const void *kfaddr, void *kdaddr, size_t len,
 int	copyinstr (const void *udaddr, void *kaddr, size_t len,
 		size_t *lencopied);
 int	copyin (const void *udaddr, void *kaddr, size_t len);
+int	copyin_nofault (const void *udaddr, void *kaddr, size_t len);
 int	copyout (const void *kaddr, void *udaddr, size_t len);
+int	copyout_nofault (const void *kaddr, void *udaddr, size_t len);
 
 int	fubyte (const void *base);
 int	subyte (void *base, int byte);
@@ -339,16 +341,6 @@ typedef void (*forklist_fn) (struct proc *parent, struct proc *child,
 int	at_fork (forklist_fn function);
 int	rm_at_fork (forklist_fn function);
 
-/*
- * Not exactly a callout LIST, but a callout entry.
- * Allow an external module to define a hardware watchdog tickler.
- * Normally a process would do this, but there are times when the
- * kernel needs to be able to hold off the watchdog, when the process
- * is not active, e.g., when dumping core.
- */
-typedef void (*watchdog_tickle_fn) (void);
-
-extern watchdog_tickle_fn	wdog_tickler;
 extern struct globaldata	*panic_cpu_gd;
 
 /* 
@@ -386,6 +378,32 @@ cdev_t udev2dev(udev_t x, int b);
 int uminor(udev_t dev);
 int umajor(udev_t dev);
 udev_t makeudev(int x, int y);
+
+/*
+ * Unit number allocation API. (kern/subr_unit.c)
+ */
+struct unrhdr;
+struct unrhdr *new_unrhdr(int low, int high, struct lock *lock);
+void delete_unrhdr(struct unrhdr *uh);
+int alloc_unr(struct unrhdr *uh);
+int alloc_unrl(struct unrhdr *uh);
+void free_unr(struct unrhdr *uh, u_int item);
+
+/*
+ * Population count algorithm using SWAR approach
+ * - "SIMD Within A Register".
+ */
+
+static __inline uint16_t
+bitcount16(uint32_t x)
+{
+
+	x = (x & 0x5555) + ((x & 0xaaaa) >> 1);
+	x = (x & 0x3333) + ((x & 0xcccc) >> 2);
+	x = (x + (x >> 4)) & 0x0f0f;
+	x = (x + (x >> 8)) & 0x00ff;
+	return (x);
+}
 
 #endif	/* _KERNEL */
 #endif /* !_SYS_SYSTM_H_ */
