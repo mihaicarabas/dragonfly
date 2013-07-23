@@ -15,7 +15,7 @@ ASSYM(VTI_GUEST_RBP, offsetof(struct vmx_thread_info, guest.tf_rbp));
 ASSYM(VTI_GUEST_R8, offsetof(struct vmx_thread_info, guest.tf_r8));
 ASSYM(VTI_GUEST_R9, offsetof(struct vmx_thread_info, guest.tf_r9));
 ASSYM(VTI_GUEST_R10, offsetof(struct vmx_thread_info, guest.tf_r10));
-ASSYM(VTI_GUEST_R11, offsetof(struct vmx_thread_info, guest.tf_rdi));
+ASSYM(VTI_GUEST_R11, offsetof(struct vmx_thread_info, guest.tf_r11));
 ASSYM(VTI_GUEST_R12, offsetof(struct vmx_thread_info, guest.tf_r12));
 ASSYM(VTI_GUEST_R13, offsetof(struct vmx_thread_info, guest.tf_r13));
 ASSYM(VTI_GUEST_R14, offsetof(struct vmx_thread_info, guest.tf_r14));
