@@ -33,6 +33,7 @@
 	} while(0)					\
 
 extern void trap(struct trapframe *frame);
+extern void syscall2(struct trapframe *frame);
 
 struct vmx_ctl_info vmx_pinbased = {
 	.msr_addr = IA32_VMX_PINBASED_CTLS,
@@ -148,9 +149,10 @@ vmx_set_ctl_setting(struct vmx_ctl_info *vmx_ctl, uint32_t bit_no, setting_t val
 			break;
 		case ONE:
 			/* For b.ii) or c.ii) */
+#ifndef BOCHS
 			if (!IS_ONE_SETTING_ALLOWED(ctl_val, bit_no))
 				return (EINVAL);
-
+#endif
 			vmx_ctl->ctls |= BIT(bit_no);
 
 			break;
@@ -319,6 +321,14 @@ vmx_init(void)
 		return (ENODEV);
 	}
 
+	/* Load MSR EFER on enry */
+	err = vmx_set_ctl_setting(&vmx_entry,
+	    VMENTRY_LOAD_IA32_EFER,
+	    ONE);
+	if (err) {
+		kprintf("VMM: VMENTRY_LOAD_IA32_EFER not supported by this CPU\n");
+		return (ENODEV);
+	}
 
 	/* Set 64bits mode */
 	err = vmx_set_ctl_setting(&vmx_exit,
@@ -326,6 +336,24 @@ vmx_init(void)
 	    ONE);
 	if (err) {
 		kprintf("VMM: VMEXIT_HOST_ADDRESS_SPACE_SIZE not supported by this CPU\n");
+		return (ENODEV);
+	}
+
+	/* Save/Load Efer on exit */
+	err = vmx_set_ctl_setting(&vmx_exit,
+	    VMEXIT_SAVE_IA32_EFER,
+	    ONE);
+	if (err) {
+		kprintf("VMM: VMEXIT_SAVE_IA32_EFER not supported by this CPU\n");
+		return (ENODEV);
+	}
+
+	/* Load Efer on exit */
+	err = vmx_set_ctl_setting(&vmx_exit,
+	    VMEXIT_LOAD_IA32_EFER,
+	    ONE);
+	if (err) {
+		kprintf("VMM: VMEXIT_LOAD_IA32_EFER not supported by this CPU\n");
 		return (ENODEV);
 	}
 
@@ -523,10 +551,10 @@ vmx_vminit(struct guest_options *options)
 	ERROR_ON(vmwrite(VMCS_HOST_CR4, rcr4()));
 
 	/* Load HOST EFER and PAT */
-#ifndef BOCHS
-	ERROR_ON(vmwrite(VMCS_HOST_IA32_PAT, rdmsr(MSR_PAT)));
+//#ifndef BOCHS
+//	ERROR_ON(vmwrite(VMCS_HOST_IA32_PAT, rdmsr(MSR_PAT)));
 	ERROR_ON(vmwrite(VMCS_HOST_IA32_EFER, rdmsr(MSR_EFER)));
-#endif
+//#endif
 	/* Load HOST selectors */
 	ERROR_ON(vmwrite(VMCS_HOST_ES_SELECTOR, GSEL(GDATA_SEL, SEL_KPL)));
 	ERROR_ON(vmwrite(VMCS_HOST_SS_SELECTOR, GSEL(GDATA_SEL, SEL_KPL)));
@@ -572,6 +600,9 @@ vmx_vminit(struct guest_options *options)
 
 	ERROR_ON(vmwrite(VMCS_GUEST_CR0, (CR0_PE | CR0_PG | cr0_fixed_to_1) & ~cr0_fixed_to_0));
 	ERROR_ON(vmwrite(VMCS_GUEST_CR4, (CR4_PAE | cr4_fixed_to_1) & ~ cr4_fixed_to_0));
+
+	ERROR_ON(vmwrite(VMCS_GUEST_IA32_EFER, (EFER_LME | EFER_LMA)));
+
 
 	ERROR_ON(vmwrite(VMCS_GUEST_RFLAGS, PSL_I | 0x02));
 
@@ -642,6 +673,9 @@ handle_vmx_vmexit(void)
 {
 	struct vmx_thread_info * vti;
 	int exit_reason;
+	int exception_type;
+	int exception_number;
+	struct trapframe *tf_old;
 	int err;
 
 	kprintf("VMM: handle_vmx_vmexit\n");
@@ -649,33 +683,82 @@ handle_vmx_vmexit(void)
 	vti = (struct vmx_thread_info *) curthread->td_vmm;
 	ERROR_ON(vti == NULL);
 
+
 	exit_reason = VMCS_BASIC_EXIT_REASON(vti->vmexit_reason);
 
 	switch (exit_reason) {
 		case EXIT_REASON_EXCEPTION:
-			kprintf("VMM: handle_vmx_vmexit: EXIT_REASON_EXCEPTION with qualification %llx\n, interruption info %llx",
-			    (long long) vti->vmexit_qualification, (long long) vti->vmexit_interruption_info);
-			err = -1;
-			goto error;
+			kprintf("VMM: handle_vmx_vmexit: EXIT_REASON_EXCEPTION with qualification "
+			    "%llx, interruption info %llx, interruption error %llx, instruction "
+			    "length %llx\n",
+			    (long long) vti->vmexit_qualification,
+			    (long long) vti->vmexit_interruption_info,
+			    (long long) vti->vmexit_interruption_error,
+			    (long long) vti->vmexit_instruction_length);
+
+			exception_type = VMCS_EXCEPTION_TYPE(vti->vmexit_interruption_info);
+			exception_number = VMCS_EXCEPTION_NUMBER(vti->vmexit_interruption_info);
+
+			memcpy(&vti->guest, &vti->guest, sizeof(struct trapframe));
+
+			if (exception_type == VMCS_EXCEPTION_HARDWARE) {
+				switch (exception_number) {
+					case IDT_UD:
+						kprintf("VMM: handle_vmx_vmexit: VMCS_EXCEPTION_HARDWARE IDT_UD\n");
+
+						vti->guest.tf_err = 2;
+						vti->guest.tf_trapno = T_FAST_SYSCALL;
+						vti->guest.tf_xflags = 0;
+
+						tf_old = curthread->td_lwp->lwp_md.md_regs;
+						curthread->td_lwp->lwp_md.md_regs = &vti->guest;
+						syscall2(&vti->guest);
+						curthread->td_lwp->lwp_md.md_regs = tf_old;
+
+						vti->guest.tf_rip += vti->vmexit_instruction_length;
+
+						break;
+					case IDT_PF:
+						kprintf("VMM: handle_vmx_vmexit: VMCS_EXCEPTION_HARDWARE IDT_PF at %llx\n",
+						    (long long) vti->guest.tf_rip);
+
+						if (vti->guest.tf_rip == 0) {
+							kprintf("VMM: handle_vmx_vmexit: Terminating...\n");
+							err = -1;
+							goto error;
+						}
+
+						vti->guest.tf_err = vti->vmexit_interruption_error;
+						vti->guest.tf_addr = vti->vmexit_qualification;
+						vti->guest.tf_xflags = 0;
+						vti->guest.tf_trapno = T_PAGEFLT;
+
+						tf_old = curthread->td_lwp->lwp_md.md_regs;
+						curthread->td_lwp->lwp_md.md_regs = &vti->guest;
+						trap(&vti->guest);
+						curthread->td_lwp->lwp_md.md_regs = tf_old;
+
+						break;
+					default:
+						kprintf("VMM: handle_vmx_vmexit: VMCS_EXCEPTION_HARDWARE unknown number %d\n",
+						    exception_number);
+						err = -1;
+						goto error;
+				}
+			} else {
+				kprintf("VMM: handle_vmx_vmexit: VMCS_EXCEPTION_ %d unknown\n", exception_type);
+				err = -1;
+				goto error;
+			}
 			break;
 		case EXIT_REASON_EXT_INTR:
-			kprintf("VMM: handle_vmx_vmexit: EXIT_REASON_EXT_INTR with qualification %lld\n",
-			    (long long) vti->vmexit_qualification);
-//			err = -1;
-//			goto error;
-			break;
-		case EXIT_REASON_VMLAUNCH:
-			kprintf("VMM: handle_vmx_vmexit: EXIT_REASON_VMLAUNCH with qualification %lld\n",
-			    (long long) vti->vmexit_qualification);
-//			err = -1;
-//			goto error;
+			kprintf("VMM: handle_vmx_vmexit: EXIT_REASON_EXT_INTR\n");
 			break;
 		default:
 			kprintf("VMM: handle_vmx_vmexit: unknown exit reason: %d with qualification %lld\n",
 			    exit_reason, (long long) vti->vmexit_qualification);
 			err = -1;
 			goto error;
-			break;
 	}
 	return 0;
 error:
@@ -758,6 +841,12 @@ restart:
 		vti->launched = 0;
 	}
 
+	ERROR_ON(vmwrite(VMCS_GUEST_RIP, vti->guest.tf_rip));
+	ERROR_ON(vmwrite(VMCS_GUEST_CS_SELECTOR, vti->guest.tf_cs));
+	ERROR_ON(vmwrite(VMCS_GUEST_RFLAGS, vti->guest.tf_rflags));
+	ERROR_ON(vmwrite(VMCS_GUEST_RSP, vti->guest.tf_rsp));
+	ERROR_ON(vmwrite(VMCS_GUEST_SS_SELECTOR, vti->guest.tf_ss));
+
 	if (vti->launched) { /* vmresume */
 		kprintf("VMM: vmx_vmrun: vmx_resume\n");
 		ret = vmx_resume(vti);
@@ -767,11 +856,12 @@ restart:
 		vti->launched = 1;
 		ret = vmx_launch(vti);
 	}
-
 	if (ret == VM_EXIT) {
 		ERROR_ON(vmread(VMCS_VMEXIT_REASON, &vti->vmexit_reason));
 		ERROR_ON(vmread(VMCS_EXIT_QUALIFICATION, &vti->vmexit_qualification));
 		ERROR_ON(vmread(VMCS_VMEXIT_INTERRUPTION_INFO, &vti->vmexit_interruption_info));
+		ERROR_ON(vmread(VMCS_VMEXIT_INTERRUPTION_ERROR, &vti->vmexit_interruption_error));
+		ERROR_ON(vmread(VMCS_VMEXIT_INSTRUCTION_LENGTH, &vti->vmexit_instruction_length));
 
 		ERROR_ON(vmread(VMCS_GUEST_RIP, &vti->guest.tf_rip));
 		ERROR_ON(vmread(VMCS_GUEST_CS_SELECTOR, &vti->guest.tf_cs));

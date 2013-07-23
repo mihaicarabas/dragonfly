@@ -51,6 +51,8 @@ struct vmx_thread_info {
 	uint64_t vmexit_reason;
 	uint64_t vmexit_qualification;
 	uint64_t vmexit_interruption_info;
+	uint64_t vmexit_interruption_error;
+	uint64_t vmexit_instruction_length;
 
 };
 
@@ -170,8 +172,8 @@ void vmx_vmexit(void);
 #define		VMEXIT_ACKNOWLEDGE_INTERRUPT_ON_EXIT	15
 #define		VMEXIT_SAVE_IA32_PAT			18
 #define		VMEXIT_LOAD_IA32_PAT			19
-#define		VMEXIT_SAVE_IA32_EFER_PAT		20
-#define		VMEXIT_LOAD_IA32_EFER_PAT		21
+#define		VMEXIT_SAVE_IA32_EFER			20
+#define		VMEXIT_LOAD_IA32_EFER			21
 #define		VMEXIT_SAVE_VMX_PREEMPTION_TIMER	22
 
 
@@ -269,5 +271,12 @@ void vmx_vmexit(void);
 #define		VMCS_G			(1 << 15)	/* Granularity */
 #define		VMCS_SEG_UNUSABLE	(1 << 16)	/* Segment unusable (0 = usable; 1 = unusable) */
 
+#define VMCS_EXCEPTION_TYPE(x)			((x >> 8) & 0x7)
+#define VMCS_EXCEPTION_EXTERNAL_INTERRUPT	0
+#define VMCS_EXCEPTION_NMI			2
+#define VMCS_EXCEPTION_HARDWARE			3
+#define VMCS_EXCEPTION_SOFTWARE			6
+
+#define VMCS_EXCEPTION_NUMBER(x)		(x & 0xFF)
 
 #endif
