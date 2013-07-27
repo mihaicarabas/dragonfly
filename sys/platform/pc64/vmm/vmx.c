@@ -908,7 +908,6 @@ vmx_set_tls_area(struct trapframe *guest) {
 
 	ERROR_IF(vmx_handle_cpu_migration());
 
-			uint64_t test, test2;
 	switch(type) {
 		case 0: /* set %fs */
 			ERROR_IF(vmx_set_guest_descriptor(FS, GSEL(GUDATA_SEL, SEL_UPL),
