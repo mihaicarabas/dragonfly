@@ -19,19 +19,5 @@ struct guest_options {
 };
 
 
-#ifdef _KERNEL
-
-#else /* !_KERNEL */
-
-#ifndef _SYS_CDEFS_H_
-#include <sys/cdefs.h>
-#endif
-
-__BEGIN_DECLS
-
-
 int	vmm_guest_ctl (int, struct guest_options *);
-__END_DECLS
-
-#endif /* !_KERNEL */
 #endif	/* !_SYS_VMM_GUEST_CTL_H_ */
