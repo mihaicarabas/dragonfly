@@ -6,6 +6,25 @@
 #include <sys/param.h>
 #include <sys/vmm_guest_ctl.h>
 
+#define ERROR_IF(func)					\
+	do {						\
+	if ((err = (func))) {				\
+		kprintf("VMM: %s error at line: %d\n",	\
+		   __func__, __LINE__);			\
+		goto error;				\
+	}						\
+	} while(0)					\
+
+#define ERROR2_IF(func)					\
+	do {						\
+	if ((err = (func))) {				\
+		kprintf("VMM: %s error at line: %d\n",	\
+		   __func__, __LINE__);			\
+		goto error2;				\
+	}						\
+	} while(0)					\
+
+
 struct vmm_ctl {
 	char name[MAX_NAME_LEN];
 	int (*init)(void);
