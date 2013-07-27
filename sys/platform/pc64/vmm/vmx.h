@@ -56,6 +56,17 @@ struct vmx_thread_info {
 
 };
 
+typedef enum {
+	ES,
+	CS,
+	SS,
+	DS,
+	FS,
+	GS,
+	LDTR,
+	TR
+} descriptor_t;
+
 int vmx_launch(struct vmx_thread_info *);
 int vmx_resume(struct vmx_thread_info *);
 void vmx_vmexit(void);
