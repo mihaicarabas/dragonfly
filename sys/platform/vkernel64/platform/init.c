@@ -52,6 +52,7 @@
 #include <vm/vm_page.h>
 #include <vm/vm_map.h>
 #include <sys/mplock2.h>
+#include <sys/vmm_guest_ctl.h>
 
 #include <machine/cpu.h>
 #include <machine/globaldata.h>
@@ -139,12 +140,54 @@ static void init_locks(void);
 static int save_ac;
 static char **save_av;
 
+#define VKERNEL_STACK_SIZE (64 * PAGE_SIZE)
+static int vkernel(void);
+
+int main(int ac, char **av) {
+	void *stack;
+	struct guest_options options;
+	int error;
+
+	save_ac = ac;
+	save_av = av;
+
+	stack = mmap(NULL, VKERNEL_STACK_SIZE, PROT_READ|PROT_WRITE|PROT_EXEC, MAP_ANON, -1, 0);
+	if (stack == MAP_FAILED) {
+		printf("Unable to allocate stack\n");
+		return -1;
+	}
+	options.ip = (register_t) vkernel; /* entry point for VKERNEL */
+	options.sp = (register_t) ((uint64_t)stack + VKERNEL_STACK_SIZE - sizeof(register_t));
+
+	error = vmm_guest_ctl(VMM_GUEST_INIT, &options);
+	if (error) {
+		printf("VMM_GUEST_INIT failed. Fallback to classic...\n");
+		vkernel();
+	}
+
+	error = vmm_guest_ctl(VMM_GUEST_RUN, NULL);
+	if (error) {
+		printf("VMM_GUEST_RUN failed. Exiting...\n");
+	}
+
+	error = vmm_guest_ctl(VMM_GUEST_DESTROY, NULL);
+	if (error) {
+		printf("VMM_GUEST_DESTROY failed. Exiting\n");
+	}
+
+	exit(EX_SOFTWARE);
+}
+
 /*
  * Kernel startup for virtual kernels - standard main()
  */
-int
-main(int ac, char **av)
+static int
+vkernel(void)
 {
+	/* We don't pass by parameter the ac and av */
+	int ac = save_ac;
+	char **av = save_av;
+
 	char *memImageFile = NULL;
 	char *netifFile[VKNETIF_MAX];
 	char *diskFile[VKDISK_MAX];
@@ -175,7 +218,6 @@ main(int ac, char **av)
 	eflag = 0;
 	pos = 0;
 	kenv_size = 0;
-
 	/*
 	 * Process options
 	 */
@@ -493,9 +535,6 @@ void
 init_kern_memory(void)
 {
 	void *base;
-	void *try;
-	char dummy;
-	char *topofstack = &dummy;
 	int i;
 	void *firstfree;
 
@@ -511,19 +550,12 @@ init_kern_memory(void)
 	 * be possible to map kernel memory in its prefered location.
 	 * Try a number of different locations.
 	 */
-	try = (void *)(512UL << 30);
-	base = NULL;
-	while ((char *)try + KERNEL_KVA_SIZE < topofstack) {
-		base = mmap(try, KERNEL_KVA_SIZE, PROT_READ|PROT_WRITE,
-			    MAP_FILE|MAP_SHARED|MAP_VPAGETABLE,
-			    MemImageFd, (off_t)try);
-		if (base == try)
-			break;
-		if (base != MAP_FAILED)
-			munmap(base, KERNEL_KVA_SIZE);
-		try = (char *)try + (512UL << 30);
-	}
-	if (base != try) {
+
+	base = mmap((void*)KERNEL_KVA_START, KERNEL_KVA_SIZE, PROT_READ|PROT_WRITE,
+		    MAP_FILE|MAP_SHARED|MAP_VPAGETABLE|MAP_FIXED|MAP_TRYFIXED,
+		    MemImageFd, (off_t)KERNEL_KVA_START);
+
+	if (base == MAP_FAILED) {
 		err(1, "Unable to mmap() kernel virtual memory!");
 		/* NOT REACHED */
 	}
