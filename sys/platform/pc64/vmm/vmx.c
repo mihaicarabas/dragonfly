@@ -7,6 +7,7 @@
 #include <sys/sysctl.h>
 #include <sys/vmm_guest_ctl.h>
 #include <sys/proc.h>
+#include <sys/syscall.h>
 
 #include <machine/cpufunc.h>
 #include <machine/cputypes.h>
@@ -20,17 +21,6 @@
 #include "vmx.h"
 #include "vmx_instr.h"
 #include "vmx_vmcs.h"
-
-//#define BOCHS
-
-#define ERROR_ON(func)					\
-	do {						\
-	if ((err = (func))) {				\
-		kprintf("VMM: %s error at line: %d\n",	\
-		   __func__, __LINE__);			\
-		goto error;				\
-	}						\
-	} while(0)					\
 
 extern void trap(struct trapframe *frame);
 extern void syscall2(struct trapframe *frame);
@@ -149,10 +139,9 @@ vmx_set_ctl_setting(struct vmx_ctl_info *vmx_ctl, uint32_t bit_no, setting_t val
 			break;
 		case ONE:
 			/* For b.ii) or c.ii) */
-#ifndef BOCHS
 			if (!IS_ONE_SETTING_ALLOWED(ctl_val, bit_no))
 				return (EINVAL);
-#endif
+
 			vmx_ctl->ctls |= BIT(bit_no);
 
 			break;
@@ -378,7 +367,6 @@ vmx_init(void)
 
 	/* Check for the feature control status */
 	feature_control = rdmsr(IA32_FEATURE_CONTROL);
-#ifndef BOCHS
 	if (!(feature_control & BIT(FEATURE_CONTROL_LOCKED))) {
 		kprintf("VMM: IA32_FEATURE_CONTROL is not locked\n");
 		return (EINVAL);
@@ -387,9 +375,7 @@ vmx_init(void)
 		kprintf("VMM: VMX is disable by the BIOS\n");
 		return (EINVAL);
 	}
-#else
-	wrmsr(IA32_FEATURE_CONTROL, feature_control | BIT(FEATURE_CONTROL_LOCKED) |  BIT(FEATURE_CONTROL_VMX_BIOS_ENABLED));
-#endif
+
 	vmx_basic_value = rdmsr(IA32_VMX_BASIC);
 	vmx_width_addr = (uint8_t) VMX_WIDTH_ADDR(vmx_basic_value);
 	vmx_region_size = (uint32_t) VMX_REGION_SIZE(vmx_basic_value);
@@ -512,13 +498,107 @@ vmx_disable(void)
 
 	return 0;
 }
+static int vmx_set_guest_descriptor(descriptor_t type,
+		uint16_t selector,
+		uint32_t rights,
+		uint64_t base,
+		uint32_t limit)
+{
+	int err;
+	int selector_enc;
+	int rights_enc;
+	int base_enc;
+	int limit_enc;
+
+
+	/*
+	 * Intel Manual Vol 3C. - page 60
+	 * If any bit in the limit field in the range 11:0 is 0, G must be 0.
+	 * If any bit in the limit field in the range 31:20 is 1, G must be 1.
+	 */
+	if ((~rights & VMCS_SEG_UNUSABLE) || (type == CS)) {
+		if ((limit & 0xfff) != 0xfff)
+			rights &= ~VMCS_G;
+		else if ((limit & 0xfff00000) != 0)
+			rights |= VMCS_G;
+	}
+
+	switch(type) {
+		case ES:
+			selector_enc = VMCS_GUEST_ES_SELECTOR;
+			rights_enc = VMCS_GUEST_ES_ACCESS_RIGHTS;
+			base_enc = VMCS_GUEST_ES_BASE;
+			limit_enc = VMCS_GUEST_ES_LIMIT;
+			break;
+		case CS:
+			selector_enc = VMCS_GUEST_CS_SELECTOR;
+			rights_enc = VMCS_GUEST_CS_ACCESS_RIGHTS;
+			base_enc = VMCS_GUEST_CS_BASE;
+			limit_enc = VMCS_GUEST_CS_LIMIT;
+			break;
+		case SS:
+			selector_enc = VMCS_GUEST_SS_SELECTOR;
+			rights_enc = VMCS_GUEST_SS_ACCESS_RIGHTS;
+			base_enc = VMCS_GUEST_SS_BASE;
+			limit_enc = VMCS_GUEST_SS_LIMIT;
+			break;
+		case DS:
+			selector_enc = VMCS_GUEST_DS_SELECTOR;
+			rights_enc = VMCS_GUEST_DS_ACCESS_RIGHTS;
+			base_enc = VMCS_GUEST_DS_BASE;
+			limit_enc = VMCS_GUEST_DS_LIMIT;
+			break;
+		case FS:
+			selector_enc = VMCS_GUEST_FS_SELECTOR;
+			rights_enc = VMCS_GUEST_FS_ACCESS_RIGHTS;
+			base_enc = VMCS_GUEST_FS_BASE;
+			limit_enc = VMCS_GUEST_FS_LIMIT;
+			break;
+		case GS:
+			selector_enc = VMCS_GUEST_GS_SELECTOR;
+			rights_enc = VMCS_GUEST_GS_ACCESS_RIGHTS;
+			base_enc = VMCS_GUEST_GS_BASE;
+			limit_enc = VMCS_GUEST_GS_LIMIT;
+			break;
+		case LDTR:
+			selector_enc = VMCS_GUEST_LDTR_SELECTOR;
+			rights_enc = VMCS_GUEST_LDTR_ACCESS_RIGHTS;
+			base_enc = VMCS_GUEST_LDTR_BASE;
+			limit_enc = VMCS_GUEST_LDTR_LIMIT;
+			break;
+		case TR:
+			selector_enc = VMCS_GUEST_TR_SELECTOR;
+			rights_enc = VMCS_GUEST_TR_ACCESS_RIGHTS;
+			base_enc = VMCS_GUEST_TR_BASE;
+			limit_enc = VMCS_GUEST_TR_LIMIT;
+			break;
+		default:
+			kprintf("VMM: vmx_set_guest_descriptor: unknown descripton\n");
+			err = -1;
+			goto error;
+			break;
+	}
+
+	ERROR_IF(vmwrite(selector_enc, selector));
+	ERROR_IF(vmwrite(rights_enc, rights));
+	ERROR_IF(vmwrite(base_enc, base));
+	ERROR_IF(vmwrite(limit_enc, limit));
+
+	return 0;
+error:
+	kprintf("VMM: vmx_set_guest_descriptor failed\n");
+	return err;
+}
 
 static int
 vmx_vminit(struct guest_options *options)
 {
 	struct vmx_thread_info * vti;
 	int err;
+	struct tls_info guest_fs = curthread->td_tls.info[0];
+	struct tls_info guest_gs = curthread->td_tls.info[1];
 	struct pcb *curpcb = curthread->td_pcb;
+
 
 	vti = kmalloc(sizeof(struct vmx_thread_info), M_TEMP, M_WAITOK | M_ZERO);
 	vti->vmcs_region_na = kmalloc(vmx_region_size + VMXON_REGION_ALIGN_SIZE,
@@ -532,39 +612,38 @@ vmx_vminit(struct guest_options *options)
 	*((uint32_t *)vti->vmcs_region) = vmx_revision;
 
 	/* vmclear the vmcs to initialize it */
-	ERROR_ON(vmclear(vti->vmcs_region));
+	ERROR_IF(vmclear(vti->vmcs_region));
 
 	crit_enter();
 
 	/* Make this the current VMCS */
-	ERROR_ON(vmptrld(vti->vmcs_region));
+	ERROR_IF(vmptrld(vti->vmcs_region));
 
 	/* Load the VMX controls */
-	ERROR_ON(vmwrite(VMCS_PINBASED_CTLS, vmx_pinbased.ctls));
-	ERROR_ON(vmwrite(VMCS_PROCBASED_CTLS, vmx_procbased.ctls));
-	ERROR_ON(vmwrite(VMCS_PROCBASED2_CTLS, vmx_procbased2.ctls));
-	ERROR_ON(vmwrite(VMCS_VMEXIT_CTLS, vmx_exit.ctls));
-	ERROR_ON(vmwrite(VMCS_VMENTRY_CTLS, vmx_entry.ctls));
+	ERROR_IF(vmwrite(VMCS_PINBASED_CTLS, vmx_pinbased.ctls));
+	ERROR_IF(vmwrite(VMCS_PROCBASED_CTLS, vmx_procbased.ctls));
+	ERROR_IF(vmwrite(VMCS_PROCBASED2_CTLS, vmx_procbased2.ctls));
+	ERROR_IF(vmwrite(VMCS_VMEXIT_CTLS, vmx_exit.ctls));
+	ERROR_IF(vmwrite(VMCS_VMENTRY_CTLS, vmx_entry.ctls));
 
 	/* Load HOST CRs */
-	ERROR_ON(vmwrite(VMCS_HOST_CR0, rcr0()));
-	ERROR_ON(vmwrite(VMCS_HOST_CR4, rcr4()));
+	ERROR_IF(vmwrite(VMCS_HOST_CR0, rcr0()));
+	ERROR_IF(vmwrite(VMCS_HOST_CR4, rcr4()));
 
 	/* Load HOST EFER and PAT */
-//#ifndef BOCHS
-//	ERROR_ON(vmwrite(VMCS_HOST_IA32_PAT, rdmsr(MSR_PAT)));
-	ERROR_ON(vmwrite(VMCS_HOST_IA32_EFER, rdmsr(MSR_EFER)));
-//#endif
+//	ERROR_IF(vmwrite(VMCS_HOST_IA32_PAT, rdmsr(MSR_PAT)));
+	ERROR_IF(vmwrite(VMCS_HOST_IA32_EFER, rdmsr(MSR_EFER)));
+
 	/* Load HOST selectors */
-	ERROR_ON(vmwrite(VMCS_HOST_ES_SELECTOR, GSEL(GDATA_SEL, SEL_KPL)));
-	ERROR_ON(vmwrite(VMCS_HOST_SS_SELECTOR, GSEL(GDATA_SEL, SEL_KPL)));
-	ERROR_ON(vmwrite(VMCS_HOST_FS_SELECTOR, GSEL(GDATA_SEL, SEL_KPL)));
-	ERROR_ON(vmwrite(VMCS_HOST_GS_SELECTOR, GSEL(GDATA_SEL, SEL_KPL)));
-	ERROR_ON(vmwrite(VMCS_HOST_CS_SELECTOR, GSEL(GCODE_SEL, SEL_KPL)));
-	ERROR_ON(vmwrite(VMCS_HOST_TR_SELECTOR, GSEL(GPROC0_SEL, SEL_KPL)));
+	ERROR_IF(vmwrite(VMCS_HOST_ES_SELECTOR, GSEL(GDATA_SEL, SEL_KPL)));
+	ERROR_IF(vmwrite(VMCS_HOST_SS_SELECTOR, GSEL(GDATA_SEL, SEL_KPL)));
+	ERROR_IF(vmwrite(VMCS_HOST_FS_SELECTOR, GSEL(GDATA_SEL, SEL_KPL)));
+	ERROR_IF(vmwrite(VMCS_HOST_GS_SELECTOR, GSEL(GDATA_SEL, SEL_KPL)));
+	ERROR_IF(vmwrite(VMCS_HOST_CS_SELECTOR, GSEL(GCODE_SEL, SEL_KPL)));
+	ERROR_IF(vmwrite(VMCS_HOST_TR_SELECTOR, GSEL(GPROC0_SEL, SEL_KPL)));
 
 	/* Load Host FS base (not used) - 0 */
-	ERROR_ON(vmwrite(VMCS_HOST_FS_BASE, 0));
+	ERROR_IF(vmwrite(VMCS_HOST_FS_BASE, 0));
 
 	/*
 	 * The BASE addresses are written on each VMRUN in case
@@ -575,54 +654,64 @@ vmx_vminit(struct guest_options *options)
 	 * Call vmx_vmexit on VM_EXIT condition
 	 * The RSP will point to the vmx_thread_info
 	 */
-	ERROR_ON(vmwrite(VMCS_HOST_RIP, (uint64_t) vmx_vmexit));
-	ERROR_ON(vmwrite(VMCS_HOST_RSP, (uint64_t) vti));
+	ERROR_IF(vmwrite(VMCS_HOST_RIP, (uint64_t) vmx_vmexit));
+	ERROR_IF(vmwrite(VMCS_HOST_RSP, (uint64_t) vti));
 
 	/*
 	 * GUEST initialization
 	 */
+	ERROR_IF(vmx_set_guest_descriptor(ES, GSEL(GUDATA_SEL, SEL_UPL),
+	    VMCS_SEG_TYPE(3) | VMCS_S | VMCS_DPL(SEL_UPL) | VMCS_P,
+	    0, 0));
 
-	ERROR_ON(vmwrite(VMCS_GUEST_ES_SELECTOR, GSEL(GUDATA_SEL, SEL_UPL)));
-	ERROR_ON(vmwrite(VMCS_GUEST_SS_SELECTOR, GSEL(GUDATA_SEL, SEL_UPL)));
-	ERROR_ON(vmwrite(VMCS_GUEST_FS_SELECTOR, GSEL(GUDATA_SEL, SEL_UPL)));
-	ERROR_ON(vmwrite(VMCS_GUEST_GS_SELECTOR, GSEL(GUDATA_SEL, SEL_UPL)));
-	ERROR_ON(vmwrite(VMCS_GUEST_CS_SELECTOR, GSEL(GUCODE_SEL, SEL_UPL)));
-	ERROR_ON(vmwrite(VMCS_GUEST_TR_SELECTOR, GSEL(GPROC0_SEL, SEL_UPL))); /* TODO */
+	ERROR_IF(vmx_set_guest_descriptor(SS, GSEL(GUDATA_SEL, SEL_UPL),
+	    VMCS_SEG_TYPE(3) | VMCS_S | VMCS_DPL(SEL_UPL) | VMCS_P,
+	    0, 0));
 
-	ERROR_ON(vmwrite(VMCS_GUEST_ES_ACCESS_RIGHTS, VMCS_SEG_TYPE(3) | VMCS_S | VMCS_DPL(SEL_UPL) | VMCS_P));
-	ERROR_ON(vmwrite(VMCS_GUEST_CS_ACCESS_RIGHTS, VMCS_SEG_TYPE(11) | VMCS_S | VMCS_DPL(SEL_UPL) | VMCS_P | VMCS_L));
-	ERROR_ON(vmwrite(VMCS_GUEST_SS_ACCESS_RIGHTS, VMCS_SEG_TYPE(3) | VMCS_S | VMCS_DPL(SEL_UPL) | VMCS_P));
-	ERROR_ON(vmwrite(VMCS_GUEST_DS_ACCESS_RIGHTS, VMCS_SEG_TYPE(3) | VMCS_S | VMCS_DPL(SEL_UPL) | VMCS_P));
-	ERROR_ON(vmwrite(VMCS_GUEST_FS_ACCESS_RIGHTS, VMCS_SEG_TYPE(3) | VMCS_S | VMCS_DPL(SEL_UPL) | VMCS_P));
-	ERROR_ON(vmwrite(VMCS_GUEST_GS_ACCESS_RIGHTS, VMCS_SEG_TYPE(3) | VMCS_S | VMCS_DPL(SEL_UPL) | VMCS_P));
-	ERROR_ON(vmwrite(VMCS_GUEST_LDTR_ACCESS_RIGHTS, VMCS_SEG_UNUSABLE));
-	ERROR_ON(vmwrite(VMCS_GUEST_TR_ACCESS_RIGHTS, VMCS_SEG_TYPE(11) | VMCS_P));
+	ERROR_IF(vmx_set_guest_descriptor(DS, GSEL(GUDATA_SEL, SEL_UPL),
+	    VMCS_SEG_TYPE(3) | VMCS_S | VMCS_DPL(SEL_UPL) | VMCS_P,
+	    0, 0));
 
-	ERROR_ON(vmwrite(VMCS_GUEST_CR0, (CR0_PE | CR0_PG | cr0_fixed_to_1) & ~cr0_fixed_to_0));
-	ERROR_ON(vmwrite(VMCS_GUEST_CR4, (CR4_PAE | cr4_fixed_to_1) & ~ cr4_fixed_to_0));
+	ERROR_IF(vmx_set_guest_descriptor(FS, GSEL(GUDATA_SEL, SEL_UPL),
+	    VMCS_SEG_TYPE(3) | VMCS_S | VMCS_DPL(SEL_UPL) | VMCS_P,
+	    (uint64_t) guest_fs.base, (uint32_t) guest_fs.size));
 
-	ERROR_ON(vmwrite(VMCS_GUEST_IA32_EFER, (EFER_LME | EFER_LMA)));
+	ERROR_IF(vmx_set_guest_descriptor(GS, GSEL(GUDATA_SEL, SEL_UPL),
+	    VMCS_SEG_TYPE(3) | VMCS_S | VMCS_DPL(SEL_UPL) | VMCS_P,
+	    (uint64_t) guest_gs.base, (uint32_t) guest_gs.size));
+
+	ERROR_IF(vmx_set_guest_descriptor(CS, GSEL(GUCODE_SEL, SEL_UPL),
+	    VMCS_SEG_TYPE(11) | VMCS_S | VMCS_DPL(SEL_UPL) | VMCS_P | VMCS_L,
+	    0, 0));
+
+	ERROR_IF(vmx_set_guest_descriptor(TR, GSEL(GPROC0_SEL, SEL_UPL),
+			VMCS_SEG_TYPE(11) | VMCS_P,
+			0, 0));
+
+	ERROR_IF(vmx_set_guest_descriptor(LDTR, 0, VMCS_SEG_UNUSABLE, 0, 0));
 
 
-	ERROR_ON(vmwrite(VMCS_GUEST_RFLAGS, PSL_I | 0x02));
+	ERROR_IF(vmwrite(VMCS_GUEST_CR0, (CR0_PE | CR0_PG | cr0_fixed_to_1) & ~cr0_fixed_to_0));
+	ERROR_IF(vmwrite(VMCS_GUEST_CR4, (CR4_PAE | cr4_fixed_to_1) & ~ cr4_fixed_to_0));
 
-	ERROR_ON(vmwrite(VMCS_GUEST_CR3, (uint64_t) curpcb->pcb_cr3));
+	ERROR_IF(vmwrite(VMCS_GUEST_IA32_EFER, (EFER_LME | EFER_LMA)));
 
-	ERROR_ON(vmwrite(VMCS_GUEST_GS_BASE, (uint64_t) curpcb->pcb_gsbase)); /* mycpu points to %gs:0 */
-	ERROR_ON(vmwrite(VMCS_GUEST_FS_BASE, (uint64_t) curpcb->pcb_fsbase));
+	ERROR_IF(vmwrite(VMCS_GUEST_RFLAGS, PSL_I | 0x02));
 
-	ERROR_ON(vmwrite(VMCS_EXCEPTION_BITMAP,(uint64_t) 0xFFFFFFFF));
+	ERROR_IF(vmwrite(VMCS_GUEST_CR3, (uint64_t) curpcb->pcb_cr3));
+
+	ERROR_IF(vmwrite(VMCS_EXCEPTION_BITMAP,(uint64_t) 0xFFFFFFFF));
 
 	/* Guest RIP and RSP */
-	ERROR_ON(vmwrite(VMCS_GUEST_RIP, options->ip));
-	ERROR_ON(vmwrite(VMCS_GUEST_RSP, options->sp));
+	ERROR_IF(vmwrite(VMCS_GUEST_RIP, options->ip));
+	ERROR_IF(vmwrite(VMCS_GUEST_RSP, options->sp));
 
 	/*
 	 * This field is included for future expansion.
 	 * Software should set this field to FFFFFFFF_FFFFFFFFH
 	 * to avoid VM-entry failures (see Section 26.3.1.5).
 	 */
-	ERROR_ON(vmwrite(VMCS_LINK_POINTER, ~0ULL));
+	ERROR_IF(vmwrite(VMCS_LINK_POINTER, ~0ULL));
 
 	/* Not ran before */
 	vti->launched = 0;
@@ -668,8 +757,186 @@ vmx_vmdestroy(void)
 	return -1;
 }
 
+/* Checks if we migrated to another cpu
+ *
+ * No locks are required
+ */
+static inline int
+vmx_check_cpu_migration(void)
+{
+	struct vmx_thread_info * vti;
+	struct globaldata *gd;
+	struct globaldata *last_gd;
+	int seq;
+	int err;
+
+	gd = mycpu;
+	vti = (struct vmx_thread_info *) curthread->td_vmm;
+	ERROR_IF(vti == NULL);
+
+	if (vti->last_cpu != -1 && vti->last_cpu != gd->gd_cpuid) {
+		kprintf("VMM: vmx_check_cpu_migration: CPU changed\n");
+
+		/* Clear the VMCS area if ran on another CPU */
+		last_gd = globaldata_find(vti->last_cpu);
+		seq = lwkt_send_ipiq(last_gd, execute_vmclear, vti->vmcs_region);
+		lwkt_wait_ipiq(gd, seq);
+		vti->last_cpu = -1;
+	}
+	return 0;
+error:
+	kprintf("VMM: vmx_check_cpu_migration failed\n");
+	return err;
+}
+
+/* Handle CPU migration
+ *
+ * We have to enter with interrupts disabled/critical section
+ * to be sure that another VMCS won't steel our CPU.
+ */
+static inline int
+vmx_handle_cpu_migration(void)
+{
+	struct vmx_thread_info * vti;
+	struct globaldata *gd;
+	int err;
+
+	gd = mycpu;
+	vti = (struct vmx_thread_info *) curthread->td_vmm;
+	ERROR_IF(vti == NULL);
+
+	if (vti->last_cpu == -1) {
+		kprintf("VMM: vmx_handle_cpu_migration init per CPU data\n");
+
+		ERROR_IF(vmptrld(vti->vmcs_region));
+		pcpu_info[gd->gd_cpuid].loaded_vmcs = vti->vmcs_region;
+
+		/* Host related registers */
+		ERROR_IF(vmwrite(VMCS_HOST_CR3, rcr3()));
+
+		ERROR_IF(vmwrite(VMCS_HOST_GS_BASE, (uint64_t) gd)); /* mycpu points to %gs:0 */
+		ERROR_IF(vmwrite(VMCS_HOST_TR_BASE, (uint64_t) &gd->gd_prvspace->mdglobaldata.gd_common_tss));
+
+		ERROR_IF(vmwrite(VMCS_HOST_GDTR_BASE, (uint64_t) &gdt[gd->gd_cpuid * NGDT]));
+		ERROR_IF(vmwrite(VMCS_HOST_IDTR_BASE, (uint64_t) r_idt_arr[gd->gd_cpuid].rd_base));
+
+
+		/* Guest related register */
+		ERROR_IF(vmwrite(VMCS_GUEST_GDTR_BASE, (uint64_t) &gdt[gd->gd_cpuid * NGDT]));
+		ERROR_IF(vmwrite(VMCS_GUEST_GDTR_LIMIT, (uint64_t) (NGDT * sizeof(gdt[0]) - 1)));
+		ERROR_IF(vmwrite(VMCS_GUEST_IDTR_BASE, (uint64_t) r_idt_arr[gd->gd_cpuid].rd_base));
+		ERROR_IF(vmwrite(VMCS_GUEST_IDTR_LIMIT, (uint64_t) r_idt_arr[gd->gd_cpuid].rd_limit));
+
+		vti->launched = 0;
+		vti->last_cpu = gd->gd_cpuid;
+
+	} else if (pcpu_info[gd->gd_cpuid].loaded_vmcs != vti->vmcs_region) {
+		kprintf("VMM: vmx_handle_cpu_migration: vmcs is not loaded\n");
+
+		/* If another VMCS was loaded, reload this one */
+		ERROR_IF(vmptrld(vti->vmcs_region));
+		pcpu_info[gd->gd_cpuid].loaded_vmcs = vti->vmcs_region;
+
+		vti->launched = 0;
+	}
+	return 0;
+error:
+	kprintf("VMM: vmx_handle_cpu_migration failed\n");
+	return err;
+}
+
+/* Load information about VMexit
+ *
+ * We still are with interrupts disabled/critical secion
+ * because we must operate with the VMCS on the CPU
+ */
+static inline int
+vmx_vmexit_loadinfo(void)
+{
+	struct vmx_thread_info *vti;
+	int err;
+
+	vti = (struct vmx_thread_info *) curthread->td_vmm;
+	ERROR_IF(vti == NULL);
+
+	ERROR_IF(vmread(VMCS_VMEXIT_REASON, &vti->vmexit_reason));
+	ERROR_IF(vmread(VMCS_EXIT_QUALIFICATION, &vti->vmexit_qualification));
+	ERROR_IF(vmread(VMCS_VMEXIT_INTERRUPTION_INFO, &vti->vmexit_interruption_info));
+	ERROR_IF(vmread(VMCS_VMEXIT_INTERRUPTION_ERROR, &vti->vmexit_interruption_error));
+	ERROR_IF(vmread(VMCS_VMEXIT_INSTRUCTION_LENGTH, &vti->vmexit_instruction_length));
+
+	ERROR_IF(vmread(VMCS_GUEST_RIP, &vti->guest.tf_rip));
+	ERROR_IF(vmread(VMCS_GUEST_CS_SELECTOR, &vti->guest.tf_cs));
+	ERROR_IF(vmread(VMCS_GUEST_RFLAGS, &vti->guest.tf_rflags));
+	ERROR_IF(vmread(VMCS_GUEST_RSP, &vti->guest.tf_rsp));
+	ERROR_IF(vmread(VMCS_GUEST_SS_SELECTOR, &vti->guest.tf_ss));
+
+	return 0;
+error:
+	kprintf("VMM: vmx_vmexit_loadinfo failed\n");
+	return err;
+}
+
+
 static int
-handle_vmx_vmexit(void)
+vmx_set_tls_area(struct trapframe *guest) {
+	struct tls_info info;
+	struct tls_info *infoin;
+	int type;
+	int infosize;
+	int err;
+
+	/*
+	 * The parameters are sent by registers 
+	 * %rdi - int type
+	 * %rsi - struct tls_info* infoin
+	 * %rdx - int infosize
+	 */
+	type = (int) guest->tf_rdi;
+	infoin = (struct tls_info*) guest->tf_rsi;
+	infosize = (int) guest->tf_rdx;
+
+	/*
+	 * Copy the contents of infoin from userspace
+	 * TODO: modify this when going to EPT!!!!
+	 */
+	copyin(infoin, &info, min(sizeof(info), infosize));
+	
+	ERROR2_IF(vmx_check_cpu_migration());
+
+	crit_enter();
+
+	ERROR_IF(vmx_handle_cpu_migration());
+
+			uint64_t test, test2;
+	switch(type) {
+		case 0: /* set %fs */
+			ERROR_IF(vmx_set_guest_descriptor(FS, GSEL(GUDATA_SEL, SEL_UPL),
+			    VMCS_SEG_TYPE(3) | VMCS_S | VMCS_DPL(SEL_UPL) | VMCS_P,
+			    (uint64_t) info.base, (uint32_t) info.size));
+			break;
+		case 1: /* set %gs */
+			ERROR_IF(vmx_set_guest_descriptor(GS, GSEL(GUDATA_SEL, SEL_UPL),
+			    VMCS_SEG_TYPE(3) | VMCS_S | VMCS_DPL(SEL_UPL) | VMCS_P,
+			    (uint64_t) info.base, (uint32_t) info.size));
+			break;
+		default:
+			kprintf("VMM: set_tls_area hook: unknown type\n");
+			err = -1;
+			goto error;
+			break;
+	}
+	crit_exit();
+	return 0;
+
+error:
+	crit_exit();
+error2:
+	return err;
+}
+
+static int
+vmx_handle_vmexit(void)
 {
 	struct vmx_thread_info * vti;
 	int exit_reason;
@@ -677,11 +944,12 @@ handle_vmx_vmexit(void)
 	int exception_number;
 	struct trapframe *tf_old;
 	int err;
+	int func, regs[4];
 
 	kprintf("VMM: handle_vmx_vmexit\n");
 
 	vti = (struct vmx_thread_info *) curthread->td_vmm;
-	ERROR_ON(vti == NULL);
+	ERROR_IF(vti == NULL);
 
 
 	exit_reason = VMCS_BASIC_EXIT_REASON(vti->vmexit_reason);
@@ -699,24 +967,38 @@ handle_vmx_vmexit(void)
 			exception_type = VMCS_EXCEPTION_TYPE(vti->vmexit_interruption_info);
 			exception_number = VMCS_EXCEPTION_NUMBER(vti->vmexit_interruption_info);
 
-			memcpy(&vti->guest, &vti->guest, sizeof(struct trapframe));
+			kprintf("VMM: handle_vmx_vmexit: EXIT_REASON_EXCEPTION rax: %llx, rip: %llx, "
+			    "rsp: %llx,  rdi: %llx, rsi: %llx\n",
+			    (long long)vti->guest.tf_rax,
+			    (long long)vti->guest.tf_rip,
+			    (long long)vti->guest.tf_rsp,
+			    (long long)vti->guest.tf_rdi,
+			    (long long)vti->guest.tf_rsi);
+
 
 			if (exception_type == VMCS_EXCEPTION_HARDWARE) {
 				switch (exception_number) {
 					case IDT_UD:
 						kprintf("VMM: handle_vmx_vmexit: VMCS_EXCEPTION_HARDWARE IDT_UD\n");
 
+						/*
+						 * Intercept set_tls_area for setting up the
+						 * %fs and %gs for guest
+						 */
+						if (vti->guest.tf_rax == SYS_set_tls_area) {
+							vmx_set_tls_area(&vti->guest);
+						}
+
 						vti->guest.tf_err = 2;
 						vti->guest.tf_trapno = T_FAST_SYSCALL;
 						vti->guest.tf_xflags = 0;
+
+						vti->guest.tf_rip += vti->vmexit_instruction_length;
 
 						tf_old = curthread->td_lwp->lwp_md.md_regs;
 						curthread->td_lwp->lwp_md.md_regs = &vti->guest;
 						syscall2(&vti->guest);
 						curthread->td_lwp->lwp_md.md_regs = tf_old;
-
-						vti->guest.tf_rip += vti->vmexit_instruction_length;
-
 						break;
 					case IDT_PF:
 						kprintf("VMM: handle_vmx_vmexit: VMCS_EXCEPTION_HARDWARE IDT_PF at %llx\n",
@@ -740,8 +1022,9 @@ handle_vmx_vmexit(void)
 
 						break;
 					default:
-						kprintf("VMM: handle_vmx_vmexit: VMCS_EXCEPTION_HARDWARE unknown number %d\n",
-						    exception_number);
+						kprintf("VMM: handle_vmx_vmexit: VMCS_EXCEPTION_HARDWARE unknown "
+						    "number %d rip: %llx, rsp: %llx\n", exception_number,
+						    (long long)vti->guest.tf_rip, (long long)vti->guest.tf_rsp);
 						err = -1;
 						goto error;
 				}
@@ -750,9 +1033,34 @@ handle_vmx_vmexit(void)
 				err = -1;
 				goto error;
 			}
+
+			kprintf("VMM: handle_vmx_vmexit: AFTER EXIT_REASON_EXCEPTION rax: %llx, rip: %llx, "
+			    "rsp: %llx,  rdi: %llx, rsi: %llx\n",
+			    (long long)vti->guest.tf_rax,
+			    (long long)vti->guest.tf_rip,
+			    (long long)vti->guest.tf_rsp,
+			    (long long)vti->guest.tf_rdi,
+			    (long long)vti->guest.tf_rsi);
+
+
 			break;
 		case EXIT_REASON_EXT_INTR:
 			kprintf("VMM: handle_vmx_vmexit: EXIT_REASON_EXT_INTR\n");
+			break;
+		case EXIT_REASON_CPUID:
+			kprintf("VMM: handle_vmx_vmexit: EXIT_REASON_CPUID\n");
+
+			func = vti->guest.tf_rax;
+
+			do_cpuid(func, regs);
+
+			vti->guest.tf_rax = regs[0];
+			vti->guest.tf_rbx = regs[1];
+			vti->guest.tf_rcx = regs[2];
+			vti->guest.tf_rdx = regs[3];
+
+			vti->guest.tf_rip += vti->vmexit_instruction_length;
+
 			break;
 		default:
 			kprintf("VMM: handle_vmx_vmexit: unknown exit reason: %d with qualification %lld\n",
@@ -764,14 +1072,11 @@ handle_vmx_vmexit(void)
 error:
 	return err;
 }
-
 static int
 vmx_vmrun(void)
 {
 	struct vmx_thread_info * vti;
 	struct globaldata *gd;
-	struct globaldata *last_gd;
-	int seq;
 	int err;
 	int ret;
 	uint64_t val;
@@ -780,16 +1085,9 @@ vmx_vmrun(void)
 restart:
 	gd = mycpu;
 	vti = (struct vmx_thread_info *) curthread->td_vmm;
-	ERROR_ON(vti == NULL);
+	ERROR2_IF(vti == NULL);
 
-	if (vti->last_cpu != -1 && vti->last_cpu != gd->gd_cpuid) {
-		kprintf("VMM: vmx_vmrun CPU changed\n");
-		/* Clear the VMCS area if ran on another CPU */
-		last_gd = globaldata_find(vti->last_cpu);
-		seq = lwkt_send_ipiq(last_gd, execute_vmclear, vti->vmcs_region);
-		lwkt_wait_ipiq(gd, seq);
-		vti->last_cpu = -1;
-	}
+	ERROR2_IF(vmx_check_cpu_migration());
 
 	cpu_disable_intr();
 	splz();
@@ -801,78 +1099,39 @@ restart:
 		cpu_enable_intr();
 		trap(&vti->guest);
 		curthread->td_lwp->lwp_md.md_regs = tmp;
-		kprintf("VMM: vmx_vmrun ASTFLTs\n");
 		goto restart;
 	}
 
+	ERROR_IF(vmx_handle_cpu_migration());
 
-	if (vti->last_cpu == -1) {
-		kprintf("VMM: vmx_vmrun init per CPU data\n");
-
-		ERROR_ON(vmptrld(vti->vmcs_region));
-		pcpu_info[gd->gd_cpuid].loaded_vmcs = vti->vmcs_region;
-
-		/* Host related registers */
-		ERROR_ON(vmwrite(VMCS_HOST_CR3, rcr3()));
-
-		ERROR_ON(vmwrite(VMCS_HOST_GS_BASE, (uint64_t) gd)); /* mycpu points to %gs:0 */
-		ERROR_ON(vmwrite(VMCS_HOST_TR_BASE, (uint64_t) &gd->gd_prvspace->mdglobaldata.gd_common_tss));
-
-		ERROR_ON(vmwrite(VMCS_HOST_GDTR_BASE, (uint64_t) &gdt[gd->gd_cpuid * NGDT]));
-		ERROR_ON(vmwrite(VMCS_HOST_IDTR_BASE, (uint64_t) r_idt_arr[gd->gd_cpuid].rd_base));
-
-
-		/* Guest related register */
-		ERROR_ON(vmwrite(VMCS_GUEST_GDTR_BASE, (uint64_t) &gdt[gd->gd_cpuid * NGDT]));
-		ERROR_ON(vmwrite(VMCS_GUEST_GDTR_LIMIT, (uint64_t) (NGDT * sizeof(gdt[0]) - 1)));
-		ERROR_ON(vmwrite(VMCS_GUEST_IDTR_BASE, (uint64_t) r_idt_arr[gd->gd_cpuid].rd_base));
-		ERROR_ON(vmwrite(VMCS_GUEST_IDTR_LIMIT, (uint64_t) r_idt_arr[gd->gd_cpuid].rd_limit));
-
-		vti->launched = 0;
-		vti->last_cpu = gd->gd_cpuid;
-
-	} else if (pcpu_info[gd->gd_cpuid].loaded_vmcs != vti->vmcs_region) {
-		kprintf("VMM: vmx_vmrun vmcs is not loaded\n");
-
-		/* If another VMCS was loaded, reload this one */
-		ERROR_ON(vmptrld(vti->vmcs_region));
-		pcpu_info[gd->gd_cpuid].loaded_vmcs = vti->vmcs_region;
-
-		vti->launched = 0;
-	}
-
-	ERROR_ON(vmwrite(VMCS_GUEST_RIP, vti->guest.tf_rip));
-	ERROR_ON(vmwrite(VMCS_GUEST_CS_SELECTOR, vti->guest.tf_cs));
-	ERROR_ON(vmwrite(VMCS_GUEST_RFLAGS, vti->guest.tf_rflags));
-	ERROR_ON(vmwrite(VMCS_GUEST_RSP, vti->guest.tf_rsp));
-	ERROR_ON(vmwrite(VMCS_GUEST_SS_SELECTOR, vti->guest.tf_ss));
+	/*
+	 * Load specific Guest registers
+	 * GP registers will be loaded in vmx_launch/resume
+	 */
+	ERROR_IF(vmwrite(VMCS_GUEST_RIP, vti->guest.tf_rip));
+	ERROR_IF(vmwrite(VMCS_GUEST_CS_SELECTOR, vti->guest.tf_cs));
+	ERROR_IF(vmwrite(VMCS_GUEST_RFLAGS, vti->guest.tf_rflags));
+	ERROR_IF(vmwrite(VMCS_GUEST_RSP, vti->guest.tf_rsp));
+	ERROR_IF(vmwrite(VMCS_GUEST_SS_SELECTOR, vti->guest.tf_ss));
 
 	if (vti->launched) { /* vmresume */
-		kprintf("VMM: vmx_vmrun: vmx_resume\n");
+		kprintf("\n\nVMM: vmx_vmrun: vmx_resume\n");
 		ret = vmx_resume(vti);
 
 	} else { /* vmlaunch */
-		kprintf("VMM: vmx_vmrun: vmx_launch\n");
+		kprintf("\n\nVMM: vmx_vmrun: vmx_launch\n");
 		vti->launched = 1;
 		ret = vmx_launch(vti);
 	}
 	if (ret == VM_EXIT) {
-		ERROR_ON(vmread(VMCS_VMEXIT_REASON, &vti->vmexit_reason));
-		ERROR_ON(vmread(VMCS_EXIT_QUALIFICATION, &vti->vmexit_qualification));
-		ERROR_ON(vmread(VMCS_VMEXIT_INTERRUPTION_INFO, &vti->vmexit_interruption_info));
-		ERROR_ON(vmread(VMCS_VMEXIT_INTERRUPTION_ERROR, &vti->vmexit_interruption_error));
-		ERROR_ON(vmread(VMCS_VMEXIT_INSTRUCTION_LENGTH, &vti->vmexit_instruction_length));
 
-		ERROR_ON(vmread(VMCS_GUEST_RIP, &vti->guest.tf_rip));
-		ERROR_ON(vmread(VMCS_GUEST_CS_SELECTOR, &vti->guest.tf_cs));
-		ERROR_ON(vmread(VMCS_GUEST_RFLAGS, &vti->guest.tf_rflags));
-		ERROR_ON(vmread(VMCS_GUEST_RSP, &vti->guest.tf_rsp));
-		ERROR_ON(vmread(VMCS_GUEST_SS_SELECTOR, &vti->guest.tf_ss));
+		ERROR_IF(vmx_vmexit_loadinfo());
 
 		cpu_enable_intr();
 
-		if (handle_vmx_vmexit())
+		if (vmx_handle_vmexit())
 			goto done;
+
 		/* We handled the VMEXIT reason and continue with VM execution */
 		goto restart;
 
@@ -893,6 +1152,7 @@ done:
 
 error:
 	cpu_enable_intr();
+error2:
 	kprintf("VMM: vmx_vmrun failed\n");
 	return err;
 }
