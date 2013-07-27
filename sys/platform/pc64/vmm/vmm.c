@@ -2,6 +2,7 @@
 
 #include <sys/systm.h>
 #include <sys/sysctl.h>
+#include <sys/eventhandler.h>
 
 #include <machine/vmm.h>
 #include <machine/cputypes.h>
@@ -50,6 +51,13 @@ sysctl_vmm_enable(SYSCTL_HANDLER_ARGS)
 }
 
 static void
+vmm_shutdown(void)
+{
+	if(vmm_enabled)
+		ctl->disable();
+}
+
+static void
 vmm_init(void)
 {
 	sysctl_ctx_init(&vmm_sysctl_ctx);
@@ -87,9 +95,12 @@ vmm_init(void)
 		} else {
 			vmm_enabled = 1;
 		}
+
+		EVENTHANDLER_REGISTER(shutdown_pre_sync, vmm_shutdown, NULL, SHUTDOWN_PRI_DEFAULT-1);
 	}
 }
-SYSINIT(vmm, SI_BOOT2_CPU_TOPOLOGY, SI_ORDER_ANY, vmm_init, NULL)
+SYSINIT(vmm_init, SI_BOOT2_CPU_TOPOLOGY, SI_ORDER_ANY, vmm_init, NULL);
+
 
 int
 vmm_vminit(struct guest_options *options)
