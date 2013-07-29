@@ -128,6 +128,14 @@ vmm_vmrun(void)
 	if (!vmm_enabled) {
 		return ENODEV;
 	}
-	kprintf("vmm_vmenter\n");
 	return ctl->vmrun();
+}
+
+int
+vmm_vm_set_tls_area(void)
+{
+	if (!vmm_enabled) {
+		return ENODEV;
+	}
+	return ctl->vm_set_tls_area();
 }

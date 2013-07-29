@@ -8,6 +8,7 @@
 #include <sys/vmm_guest_ctl.h>
 #include <sys/proc.h>
 #include <sys/syscall.h>
+#include <sys/vkernel.h>
 
 #include <machine/cpufunc.h>
 #include <machine/cputypes.h>
@@ -516,12 +517,14 @@ static int vmx_set_guest_descriptor(descriptor_t type,
 	 * If any bit in the limit field in the range 11:0 is 0, G must be 0.
 	 * If any bit in the limit field in the range 31:20 is 1, G must be 1.
 	 */
+	kprintf("VMM: vmx_set_guest_descriptor: %d, limit:%llx, rights: %llx, base: %llx\n", (int) type, (long long) limit, (long long) rights, (long long) base);
 	if ((~rights & VMCS_SEG_UNUSABLE) || (type == CS)) {
 		if ((limit & 0xfff) != 0xfff)
 			rights &= ~VMCS_G;
 		else if ((limit & 0xfff00000) != 0)
 			rights |= VMCS_G;
 	}
+	kprintf("VMM: vmx_set_guest_descriptor: %d, limit:%llx, rights: %llx\n", (int) type, (long long) limit, (long long) rights);
 
 	switch(type) {
 		case ES:
@@ -692,7 +695,7 @@ vmx_vminit(struct guest_options *options)
 
 
 	ERROR_IF(vmwrite(VMCS_GUEST_CR0, (CR0_PE | CR0_PG | cr0_fixed_to_1) & ~cr0_fixed_to_0));
-	ERROR_IF(vmwrite(VMCS_GUEST_CR4, (CR4_PAE | cr4_fixed_to_1) & ~ cr4_fixed_to_0));
+	ERROR_IF(vmwrite(VMCS_GUEST_CR4, (CR4_PAE | CR4_FXSR | CR4_XMM | cr4_fixed_to_1) & ~ cr4_fixed_to_0));
 
 	ERROR_IF(vmwrite(VMCS_GUEST_IA32_EFER, (EFER_LME | EFER_LMA)));
 
@@ -879,52 +882,31 @@ error:
 
 
 static int
-vmx_set_tls_area(struct trapframe *guest) {
-	struct tls_info info;
-	struct tls_info *infoin;
-	int type;
-	int infosize;
+vmx_set_tls_area(void)
+{
+	struct tls_info *guest_fs = &curthread->td_tls.info[0];
+	struct tls_info *guest_gs = &curthread->td_tls.info[1];
+
 	int err;
 
-	/*
-	 * The parameters are sent by registers 
-	 * %rdi - int type
-	 * %rsi - struct tls_info* infoin
-	 * %rdx - int infosize
-	 */
-	type = (int) guest->tf_rdi;
-	infoin = (struct tls_info*) guest->tf_rsi;
-	infosize = (int) guest->tf_rdx;
+	kprintf("VMM: vmx_set_tls_area hook\n");
 
-	/*
-	 * Copy the contents of infoin from userspace
-	 * TODO: modify this when going to EPT!!!!
-	 */
-	copyin(infoin, &info, min(sizeof(info), infosize));
-	
 	ERROR2_IF(vmx_check_cpu_migration());
 
 	crit_enter();
 
 	ERROR_IF(vmx_handle_cpu_migration());
 
-	switch(type) {
-		case 0: /* set %fs */
-			ERROR_IF(vmx_set_guest_descriptor(FS, GSEL(GUDATA_SEL, SEL_UPL),
-			    VMCS_SEG_TYPE(3) | VMCS_S | VMCS_DPL(SEL_UPL) | VMCS_P,
-			    (uint64_t) info.base, (uint32_t) info.size));
-			break;
-		case 1: /* set %gs */
-			ERROR_IF(vmx_set_guest_descriptor(GS, GSEL(GUDATA_SEL, SEL_UPL),
-			    VMCS_SEG_TYPE(3) | VMCS_S | VMCS_DPL(SEL_UPL) | VMCS_P,
-			    (uint64_t) info.base, (uint32_t) info.size));
-			break;
-		default:
-			kprintf("VMM: set_tls_area hook: unknown type\n");
-			err = -1;
-			goto error;
-			break;
-	}
+	/* set %fs */
+	ERROR_IF(vmx_set_guest_descriptor(FS, GSEL(GUDATA_SEL, SEL_UPL),
+	    VMCS_SEG_TYPE(3) | VMCS_S | VMCS_DPL(SEL_UPL) | VMCS_P,
+	    (uint64_t) guest_fs->base, (uint32_t) guest_fs->size));
+	
+	/* set %gs */
+	ERROR_IF(vmx_set_guest_descriptor(GS, GSEL(GUDATA_SEL, SEL_UPL),
+	    VMCS_SEG_TYPE(3) | VMCS_S | VMCS_DPL(SEL_UPL) | VMCS_P,
+	    (uint64_t) guest_gs->base, (uint32_t) guest_gs->size));
+
 	crit_exit();
 	return 0;
 
@@ -944,7 +926,7 @@ vmx_handle_vmexit(void)
 	struct trapframe *tf_old;
 	int err;
 	int func, regs[4];
-
+	struct lwp *lp = curthread->td_lwp;
 	kprintf("VMM: handle_vmx_vmexit\n");
 
 	vti = (struct vmx_thread_info *) curthread->td_vmm;
@@ -980,24 +962,16 @@ vmx_handle_vmexit(void)
 					case IDT_UD:
 						kprintf("VMM: handle_vmx_vmexit: VMCS_EXCEPTION_HARDWARE IDT_UD\n");
 
-						/*
-						 * Intercept set_tls_area for setting up the
-						 * %fs and %gs for guest
-						 */
-						if (vti->guest.tf_rax == SYS_set_tls_area) {
-							vmx_set_tls_area(&vti->guest);
-						}
-
 						vti->guest.tf_err = 2;
 						vti->guest.tf_trapno = T_FAST_SYSCALL;
 						vti->guest.tf_xflags = 0;
 
 						vti->guest.tf_rip += vti->vmexit_instruction_length;
 
-						tf_old = curthread->td_lwp->lwp_md.md_regs;
-						curthread->td_lwp->lwp_md.md_regs = &vti->guest;
+						tf_old = lp->lwp_md.md_regs;
+						lp->lwp_md.md_regs = &vti->guest;
 						syscall2(&vti->guest);
-						curthread->td_lwp->lwp_md.md_regs = tf_old;
+						lp->lwp_md.md_regs = tf_old;
 						break;
 					case IDT_PF:
 						kprintf("VMM: handle_vmx_vmexit: VMCS_EXCEPTION_HARDWARE IDT_PF at %llx\n",
@@ -1112,6 +1086,7 @@ restart:
 	ERROR_IF(vmwrite(VMCS_GUEST_RFLAGS, vti->guest.tf_rflags));
 	ERROR_IF(vmwrite(VMCS_GUEST_RSP, vti->guest.tf_rsp));
 	ERROR_IF(vmwrite(VMCS_GUEST_SS_SELECTOR, vti->guest.tf_ss));
+	ERROR_IF(vmwrite(VMCS_GUEST_CR3, (uint64_t) curthread->td_pcb->pcb_cr3));
 
 	if (vti->launched) { /* vmresume */
 		kprintf("\n\nVMM: vmx_vmrun: vmx_resume\n");
@@ -1165,6 +1140,7 @@ static struct vmm_ctl ctl_vmx = {
 	.vminit = vmx_vminit,
 	.vmdestroy = vmx_vmdestroy,
 	.vmrun = vmx_vmrun,
+	.vm_set_tls_area = vmx_set_tls_area,
 };
 
 struct vmm_ctl*

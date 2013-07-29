@@ -33,6 +33,7 @@ struct vmm_ctl {
 	int (*vminit)(struct guest_options *);
 	int (*vmdestroy)(void);
 	int (*vmrun)(void);
+	int (*vm_set_tls_area)(void);
 };
 
 struct vmm_ctl* get_ctl_intel(void);

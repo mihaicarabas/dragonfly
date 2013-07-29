@@ -6,5 +6,6 @@
 int vmm_vminit(struct guest_options*);
 int vmm_vmdestroy(void);
 int vmm_vmrun(void);
+int vmm_vm_set_tls_area(void);
 
 #endif
