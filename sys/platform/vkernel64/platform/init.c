@@ -140,7 +140,6 @@ static void init_locks(void);
 static int save_ac;
 static char **save_av;
 
-#define VKERNEL_STACK_SIZE (64 * PAGE_SIZE)
 static int vkernel(void);
 
 int main(int ac, char **av) {
@@ -151,13 +150,13 @@ int main(int ac, char **av) {
 	save_ac = ac;
 	save_av = av;
 
-	stack = mmap(NULL, VKERNEL_STACK_SIZE, PROT_READ|PROT_WRITE|PROT_EXEC, MAP_ANON, -1, 0);
+	stack = mmap(NULL, KERNEL_STACK_SIZE, PROT_READ|PROT_WRITE|PROT_EXEC, MAP_ANON, -1, 0);
 	if (stack == MAP_FAILED) {
 		printf("Unable to allocate stack\n");
 		return -1;
 	}
 	options.ip = (register_t) vkernel; /* entry point for VKERNEL */
-	options.sp = (register_t) ((uint64_t)stack + VKERNEL_STACK_SIZE - sizeof(register_t));
+	options.sp = (register_t) ((uint64_t)stack + KERNEL_STACK_SIZE - sizeof(register_t));
 
 	error = vmm_guest_ctl(VMM_GUEST_INIT, &options);
 	if (error) {
@@ -168,11 +167,10 @@ int main(int ac, char **av) {
 	error = vmm_guest_ctl(VMM_GUEST_RUN, NULL);
 	if (error) {
 		printf("VMM_GUEST_RUN failed. Exiting...\n");
-	}
 
-	error = vmm_guest_ctl(VMM_GUEST_DESTROY, NULL);
-	if (error) {
-		printf("VMM_GUEST_DESTROY failed. Exiting\n");
+		vmm_guest_ctl(VMM_GUEST_DESTROY, NULL);
+
+		exit(error);
 	}
 
 	exit(EX_SOFTWARE);

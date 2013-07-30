@@ -75,6 +75,7 @@
  */
 #define KERNEL_KVA_START	(64UL << 30)	/* From 64GB */
 #define KERNEL_KVA_SIZE		(2UL * 1024 * 1024 * 1024)
+#define KERNEL_STACK_SIZE	(64 * PAGE_SIZE)
 
 #define VM_MIN_USER_ADDRESS	((vm_offset_t)0)
 #define VM_MAX_USER_ADDRESS	UVADDR(NUPML4E, 0, 0, 0)
