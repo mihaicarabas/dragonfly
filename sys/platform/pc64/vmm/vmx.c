@@ -702,7 +702,7 @@ vmx_vminit(struct guest_options *options)
 
 
 	ERROR_IF(vmwrite(VMCS_GUEST_CR0, (CR0_PE | CR0_PG | cr0_fixed_to_1) & ~cr0_fixed_to_0));
-	ERROR_IF(vmwrite(VMCS_GUEST_CR4, (CR4_PAE | CR4_FXSR | CR4_XMM | cr4_fixed_to_1) & ~ cr4_fixed_to_0));
+	ERROR_IF(vmwrite(VMCS_GUEST_CR4, (CR4_PAE | CR4_FXSR | CR4_XMM | CR4_XSAVE | cr4_fixed_to_1) & ~ cr4_fixed_to_0));
 
 	ERROR_IF(vmwrite(VMCS_GUEST_IA32_EFER, (EFER_LME | EFER_LMA)));
 
