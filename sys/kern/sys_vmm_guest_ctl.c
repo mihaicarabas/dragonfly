@@ -24,7 +24,6 @@ sys_vmm_guest_ctl(struct vmm_guest_ctl_args *uap)
 	clear_quickret();
 	switch (uap->op) {
 		case VMM_GUEST_INIT:
-			kprintf("sys_vmm_guest: VMM_GUEST_INIT op\n");
 			error = copyin(uap->options, &options, sizeof(struct guest_options));
 			if (error) {
 				kprintf("sys_vmm_guest: error copyin guest_options\n");
@@ -38,8 +37,6 @@ sys_vmm_guest_ctl(struct vmm_guest_ctl_args *uap)
 			}
 			break;
 		case VMM_GUEST_RUN:
-			kprintf("sys_vmm_guest: VMM_GUEST_RUN op\n");
-
 			error = vmm_vmrun();
 			if (error) {
 				kprintf("sys_vmm_guest: vmm_vmrun failed\n");
@@ -47,8 +44,6 @@ sys_vmm_guest_ctl(struct vmm_guest_ctl_args *uap)
 			}
 			break;
 		case VMM_GUEST_DESTROY:
-			kprintf("sys_vmm_guest: VMM_GUEST_DESTROY op\n");
-
 			error = vmm_vmdestroy();
 			if (error) {
 				kprintf("sys_vmm_guest: vmm_vmdestroy failed\n");
