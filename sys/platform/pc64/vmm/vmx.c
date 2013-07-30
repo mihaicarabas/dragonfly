@@ -9,6 +9,7 @@
 #include <sys/proc.h>
 #include <sys/syscall.h>
 #include <sys/vkernel.h>
+#include <ddb/ddb.h>
 
 #include <machine/cpufunc.h>
 #include <machine/cputypes.h>
@@ -17,7 +18,9 @@
 #include <machine/globaldata.h>
 #include <machine/trap.h>
 
+
 #include "vmm.h"
+#include "vmm_utils.h"
 
 #include "vmx.h"
 #include "vmx_instr.h"
@@ -25,6 +28,12 @@
 
 extern void trap(struct trapframe *frame);
 extern void syscall2(struct trapframe *frame);
+
+struct instr_decode syscall_asm = {
+	.opcode_bytes = 2,
+	.opcode.byte1 = 0x0F,
+	.opcode.byte2 = 0x05,
+};
 
 struct vmx_ctl_info vmx_pinbased = {
 	.msr_addr = IA32_VMX_PINBASED_CTLS,
@@ -517,14 +526,12 @@ static int vmx_set_guest_descriptor(descriptor_t type,
 	 * If any bit in the limit field in the range 11:0 is 0, G must be 0.
 	 * If any bit in the limit field in the range 31:20 is 1, G must be 1.
 	 */
-	kprintf("VMM: vmx_set_guest_descriptor: %d, limit:%llx, rights: %llx, base: %llx\n", (int) type, (long long) limit, (long long) rights, (long long) base);
 	if ((~rights & VMCS_SEG_UNUSABLE) || (type == CS)) {
 		if ((limit & 0xfff) != 0xfff)
 			rights &= ~VMCS_G;
 		else if ((limit & 0xfff00000) != 0)
 			rights |= VMCS_G;
 	}
-	kprintf("VMM: vmx_set_guest_descriptor: %d, limit:%llx, rights: %llx\n", (int) type, (long long) limit, (long long) rights);
 
 	switch(type) {
 		case ES:
@@ -778,7 +785,7 @@ vmx_check_cpu_migration(void)
 	ERROR_IF(vti == NULL);
 
 	if (vti->last_cpu != -1 && vti->last_cpu != gd->gd_cpuid) {
-		kprintf("VMM: vmx_check_cpu_migration: CPU changed\n");
+		dkprintf("VMM: vmx_check_cpu_migration: CPU changed\n");
 
 		/* Clear the VMCS area if ran on another CPU */
 		last_gd = globaldata_find(vti->last_cpu);
@@ -809,7 +816,7 @@ vmx_handle_cpu_migration(void)
 	ERROR_IF(vti == NULL);
 
 	if (vti->last_cpu == -1) {
-		kprintf("VMM: vmx_handle_cpu_migration init per CPU data\n");
+		dkprintf("VMM: vmx_handle_cpu_migration init per CPU data\n");
 
 		ERROR_IF(vmptrld(vti->vmcs_region));
 		pcpu_info[gd->gd_cpuid].loaded_vmcs = vti->vmcs_region;
@@ -834,7 +841,7 @@ vmx_handle_cpu_migration(void)
 		vti->last_cpu = gd->gd_cpuid;
 
 	} else if (pcpu_info[gd->gd_cpuid].loaded_vmcs != vti->vmcs_region) {
-		kprintf("VMM: vmx_handle_cpu_migration: vmcs is not loaded\n");
+		dkprintf("VMM: vmx_handle_cpu_migration: vmcs is not loaded\n");
 
 		/* If another VMCS was loaded, reload this one */
 		ERROR_IF(vmptrld(vti->vmcs_region));
@@ -889,7 +896,7 @@ vmx_set_tls_area(void)
 
 	int err;
 
-	kprintf("VMM: vmx_set_tls_area hook\n");
+	dkprintf("VMM: vmx_set_tls_area hook\n");
 
 	ERROR2_IF(vmx_check_cpu_migration());
 
@@ -916,6 +923,7 @@ error2:
 	return err;
 }
 
+
 static int
 vmx_handle_vmexit(void)
 {
@@ -927,7 +935,7 @@ vmx_handle_vmexit(void)
 	int err;
 	int func, regs[4];
 	struct lwp *lp = curthread->td_lwp;
-	kprintf("VMM: handle_vmx_vmexit\n");
+	dkprintf("VMM: handle_vmx_vmexit\n");
 
 	vti = (struct vmx_thread_info *) curthread->td_vmm;
 	ERROR_IF(vti == NULL);
@@ -937,7 +945,7 @@ vmx_handle_vmexit(void)
 
 	switch (exit_reason) {
 		case EXIT_REASON_EXCEPTION:
-			kprintf("VMM: handle_vmx_vmexit: EXIT_REASON_EXCEPTION with qualification "
+			dkprintf("VMM: handle_vmx_vmexit: EXIT_REASON_EXCEPTION with qualification "
 			    "%llx, interruption info %llx, interruption error %llx, instruction "
 			    "length %llx\n",
 			    (long long) vti->vmexit_qualification,
@@ -948,7 +956,7 @@ vmx_handle_vmexit(void)
 			exception_type = VMCS_EXCEPTION_TYPE(vti->vmexit_interruption_info);
 			exception_number = VMCS_EXCEPTION_NUMBER(vti->vmexit_interruption_info);
 
-			kprintf("VMM: handle_vmx_vmexit: EXIT_REASON_EXCEPTION rax: %llx, rip: %llx, "
+			dkprintf("VMM: handle_vmx_vmexit: EXIT_REASON_EXCEPTION rax: %llx, rip: %llx, "
 			    "rsp: %llx,  rdi: %llx, rsi: %llx\n",
 			    (long long)vti->guest.tf_rax,
 			    (long long)vti->guest.tf_rip,
@@ -960,8 +968,22 @@ vmx_handle_vmexit(void)
 			if (exception_type == VMCS_EXCEPTION_HARDWARE) {
 				switch (exception_number) {
 					case IDT_UD:
-						kprintf("VMM: handle_vmx_vmexit: VMCS_EXCEPTION_HARDWARE IDT_UD\n");
-
+						dkprintf("VMM: handle_vmx_vmexit: VMCS_EXCEPTION_HARDWARE IDT_UD\n");
+#ifdef VMM_DEBUG
+						uint8_t instruction[INSTRUCTION_MAX_LENGTH];
+						/* Check to see if its syscall asm instuction */
+						user_vkernel_copyin(
+						    (const void *) vti->guest.tf_rip,
+						    instruction,
+						    vti->vmexit_instruction_length);
+						
+						if (instr_check(&syscall_asm,
+						    (void *) instruction,
+						    (uint8_t) vti->vmexit_instruction_length)) {
+							kprintf("VMM: handle_vmx_vmexit: UD different from syscall: ");
+							db_disasm((db_addr_t) instruction, FALSE, NULL);
+						}
+#endif
 						vti->guest.tf_err = 2;
 						vti->guest.tf_trapno = T_FAST_SYSCALL;
 						vti->guest.tf_xflags = 0;
@@ -972,9 +994,10 @@ vmx_handle_vmexit(void)
 						lp->lwp_md.md_regs = &vti->guest;
 						syscall2(&vti->guest);
 						lp->lwp_md.md_regs = tf_old;
+
 						break;
 					case IDT_PF:
-						kprintf("VMM: handle_vmx_vmexit: VMCS_EXCEPTION_HARDWARE IDT_PF at %llx\n",
+						dkprintf("VMM: handle_vmx_vmexit: VMCS_EXCEPTION_HARDWARE IDT_PF at %llx\n",
 						    (long long) vti->guest.tf_rip);
 
 						if (vti->guest.tf_rip == 0) {
@@ -1007,7 +1030,7 @@ vmx_handle_vmexit(void)
 				goto error;
 			}
 
-			kprintf("VMM: handle_vmx_vmexit: AFTER EXIT_REASON_EXCEPTION rax: %llx, rip: %llx, "
+			dkprintf("VMM: handle_vmx_vmexit: AFTER EXIT_REASON_EXCEPTION rax: %llx, rip: %llx, "
 			    "rsp: %llx,  rdi: %llx, rsi: %llx\n",
 			    (long long)vti->guest.tf_rax,
 			    (long long)vti->guest.tf_rip,
@@ -1018,10 +1041,10 @@ vmx_handle_vmexit(void)
 
 			break;
 		case EXIT_REASON_EXT_INTR:
-			kprintf("VMM: handle_vmx_vmexit: EXIT_REASON_EXT_INTR\n");
+			dkprintf("VMM: handle_vmx_vmexit: EXIT_REASON_EXT_INTR\n");
 			break;
 		case EXIT_REASON_CPUID:
-			kprintf("VMM: handle_vmx_vmexit: EXIT_REASON_CPUID\n");
+			dkprintf("VMM: handle_vmx_vmexit: EXIT_REASON_CPUID\n");
 
 			func = vti->guest.tf_rax;
 
@@ -1089,11 +1112,11 @@ restart:
 	ERROR_IF(vmwrite(VMCS_GUEST_CR3, (uint64_t) curthread->td_pcb->pcb_cr3));
 
 	if (vti->launched) { /* vmresume */
-		kprintf("\n\nVMM: vmx_vmrun: vmx_resume\n");
+		dkprintf("\n\nVMM: vmx_vmrun: vmx_resume\n");
 		ret = vmx_resume(vti);
 
 	} else { /* vmlaunch */
-		kprintf("\n\nVMM: vmx_vmrun: vmx_launch\n");
+		dkprintf("\n\nVMM: vmx_vmrun: vmx_launch\n");
 		vti->launched = 1;
 		ret = vmx_launch(vti);
 	}

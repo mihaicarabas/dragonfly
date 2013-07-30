@@ -24,6 +24,13 @@
 	}						\
 	} while(0)					\
 
+#ifdef VMM_DEBUG
+#define dkprintf(fmt, args...)		kprintf(fmt, ##args)
+#else
+#define dkprintf(fmt, args...)
+#endif
+
+#define INSTRUCTION_MAX_LENGTH		15
 
 struct vmm_ctl {
 	char name[MAX_NAME_LEN];

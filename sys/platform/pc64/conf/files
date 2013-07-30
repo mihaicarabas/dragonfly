@@ -262,6 +262,7 @@ vmx_assym.h				standard					\
 	no-obj no-implicit-rule before-depend						\
 	clean		"vmx_assym.h"
 platform/pc64/vmm/vmm.c			standard
+platform/pc64/vmm/vmm_utils.c		standard
 platform/pc64/vmm/vmx.c			standard
 platform/pc64/vmm/vmx_trap.s		standard
 platform/pc64/vmm/svm.c			standard
