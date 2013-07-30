@@ -462,10 +462,6 @@ extern void stopevent(struct proc*, unsigned int, unsigned int);
 		}				\
 	} while (0)
 
-/* Lock and unlock a process. */
-#define PROC_LOCK(p)    lwkt_gettoken(&proc_token)
-#define PROC_UNLOCK(p)  lwkt_reltoken(&proc_token)
-
 /*
  * Hold process in memory, don't destruct, used by ktrace, procfs, sigio,
  * and signaling code (e.g. ksignal()).
@@ -555,8 +551,6 @@ void	setrunnable (struct lwp *);
 void	proc_stop (struct proc *);
 void	proc_unstop (struct proc *);
 void	sleep_gdinit (struct globaldata *);
-int	suser (struct thread *td);
-int	suser_cred (struct ucred *cred, int flag);
 thread_t cpu_heavy_switch (struct thread *);
 thread_t cpu_lwkt_switch (struct thread *);
 
