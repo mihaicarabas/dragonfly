@@ -450,6 +450,7 @@ execute_vmclear(void *vmcs_region)
 	if (err) {
 		kprintf("VMM: vmclear failed on cpu%d\n", mycpuid);
 	}
+	kprintf("VMM: vmclear success on cpu%d for %llx\n", mycpuid, (long long) vmcs_reg);
 
 }
 
@@ -457,8 +458,7 @@ static int
 vmx_enable(void)
 {
 	int err;
-	globaldata_t gd;
-	int cpu, seq;
+	int cpu;
 
 	if (!vmx_initialized) {
 		kprintf("VMM: vmx_enable - not allowed; vmx not initialized\n");
@@ -471,12 +471,9 @@ vmx_enable(void)
 	}
 
 	alloc_vmxon_regions();
-
 	for (cpu = 0; cpu < ncpus; cpu++) {
 		err = 0;
-		gd = globaldata_find(cpu);
-		seq = lwkt_send_ipiq(gd, execute_vmxon, &err);
-		lwkt_wait_ipiq(gd, seq);
+		lwkt_cpusync_simple(CPUMASK(cpu), execute_vmxon, &err);
 		if(err) {
 			kprintf("VMM: vmx_enable error %d on cpu%d\n", err, cpu);
 			return err;
@@ -489,18 +486,14 @@ vmx_enable(void)
 static int
 vmx_disable(void)
 {
-	globaldata_t gd;
-	int cpu, seq;
+	int cpu;
 
 	if (!vmx_enabled) {
 		kprintf("VMM: vmx_disable not allowed; vmx wasn't enabled\n");
 	}
 
-	for (cpu = 0; cpu < ncpus; cpu++) {
-		gd = globaldata_find(cpu);
-		seq = lwkt_send_ipiq(gd, execute_vmxoff, NULL);
-		lwkt_wait_ipiq(gd, seq);
-	}
+	for (cpu = 0; cpu < ncpus; cpu++)
+		lwkt_cpusync_simple(CPUMASK(cpu), execute_vmxoff, NULL);
 
 	free_vmxon_regions();
 
@@ -724,6 +717,7 @@ vmx_vminit(struct guest_options *options)
 	ERROR_IF(vmwrite(VMCS_LINK_POINTER, ~0ULL));
 
 	/* Not ran before */
+	ERROR_IF(vmclear(vti->vmcs_region));
 	vti->launched = 0;
 	vti->last_cpu = -1;
 
@@ -776,8 +770,6 @@ vmx_check_cpu_migration(void)
 {
 	struct vmx_thread_info * vti;
 	struct globaldata *gd;
-	struct globaldata *last_gd;
-	int seq;
 	int err;
 
 	gd = mycpu;
@@ -785,12 +777,12 @@ vmx_check_cpu_migration(void)
 	ERROR_IF(vti == NULL);
 
 	if (vti->last_cpu != -1 && vti->last_cpu != gd->gd_cpuid) {
-		dkprintf("VMM: vmx_check_cpu_migration: CPU changed\n");
+		dkprintf("VMM: vmx_check_cpu_migration: CPU changed, %d\n");
+		kprintf("VMM: vmx_check_cpu_migration: CPU changed, last: %d, cur: %d \n", vti->last_cpu,  gd->gd_cpuid);
 
 		/* Clear the VMCS area if ran on another CPU */
-		last_gd = globaldata_find(vti->last_cpu);
-		seq = lwkt_send_ipiq(last_gd, execute_vmclear, vti->vmcs_region);
-		lwkt_wait_ipiq(gd, seq);
+		lwkt_cpusync_simple(CPUMASK(vti->last_cpu), execute_vmclear, vti->vmcs_region);
+
 		vti->last_cpu = -1;
 	}
 	return 0;
@@ -817,6 +809,7 @@ vmx_handle_cpu_migration(void)
 
 	if (vti->last_cpu == -1) {
 		dkprintf("VMM: vmx_handle_cpu_migration init per CPU data\n");
+//		kprintf("VMM: vmx_handle_cpu_migration init per CPU data, cpu:%d\n", gd->gd_cpuid);
 
 		ERROR_IF(vmptrld(vti->vmcs_region));
 		pcpu_info[gd->gd_cpuid].loaded_vmcs = vti->vmcs_region;
@@ -842,12 +835,13 @@ vmx_handle_cpu_migration(void)
 
 	} else if (pcpu_info[gd->gd_cpuid].loaded_vmcs != vti->vmcs_region) {
 		dkprintf("VMM: vmx_handle_cpu_migration: vmcs is not loaded\n");
+//		kprintf("VMM: vmx_handle_cpu_migration: vmcs is not loaded: %llx %llx\n", (long long) pcpu_info[gd->gd_cpuid].loaded_vmcs , (long long) vti->vmcs_region);
 
 		/* If another VMCS was loaded, reload this one */
 		ERROR_IF(vmptrld(vti->vmcs_region));
 		pcpu_info[gd->gd_cpuid].loaded_vmcs = vti->vmcs_region;
 
-		vti->launched = 0;
+//		vti->launched = 0;
 	}
 	return 0;
 error:
@@ -898,9 +892,10 @@ vmx_set_tls_area(void)
 
 	dkprintf("VMM: vmx_set_tls_area hook\n");
 
-	ERROR2_IF(vmx_check_cpu_migration());
-
 	crit_enter();
+
+	ERROR_IF(vmx_check_cpu_migration());
+
 
 	ERROR_IF(vmx_handle_cpu_migration());
 
@@ -919,7 +914,7 @@ vmx_set_tls_area(void)
 
 error:
 	crit_exit();
-error2:
+//error2:
 	return err;
 }
 
@@ -1083,9 +1078,11 @@ restart:
 	vti = (struct vmx_thread_info *) curthread->td_vmm;
 	ERROR2_IF(vti == NULL);
 
+	crit_enter();
 	ERROR2_IF(vmx_check_cpu_migration());
 
 	cpu_disable_intr();
+	crit_exit();
 	splz();
 	if (gd->gd_reqflags & RQF_AST_MASK) {
 		atomic_clear_int(&gd->gd_reqflags, RQF_AST_SIGNAL);
@@ -1138,6 +1135,8 @@ restart:
 			vmread(VMCS_INSTR_ERR, &val);
 			err = (int) val;
 			kprintf("VMM: vmx_vmrun: vmenter failed with VM_FAIL_VALID, error code %d\n", err);
+			kprintf("VMM: vmx_vmrun: vmenter failed lastcpu:%d, vmcs_reg: %llx ; loaded_vmcs: %llx\n", (int)vti->last_cpu, (long long)vti->vmcs_region, (long long) pcpu_info[mycpu->gd_cpuid].loaded_vmcs);
+
 		} else {
 			kprintf("VMM: vmx_vmrun: vmenter failed with VM_FAIL_INVALID\n");
 		}
