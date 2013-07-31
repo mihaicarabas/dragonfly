@@ -38,6 +38,7 @@
 #include <sys/memrange.h>
 #include <sys/tls.h>
 #include <sys/types.h>
+#include <sys/vmm_guest_ctl.h>
 
 #include <vm/vm_extern.h>
 #include <vm/vm_kern.h>
@@ -53,6 +54,7 @@
 #include <machine/pmap.h>
 #include <machine/smp.h>
 #include <machine/tls.h>
+#include <machine/param.h>
 
 #include <unistd.h>
 #include <pthread.h>
@@ -91,6 +93,7 @@ static int bootAP;
 static int start_all_aps(u_int);
 void init_secondary(void);
 void *start_ap(void *);
+void *vmm_start_ap(void *);
 
 /*
  * Get SMP fully working before we start initializing devices.
@@ -130,7 +133,6 @@ ap_finish(void)
 
 SYSINIT(finishsmp, SI_BOOT2_FINISH_SMP, SI_ORDER_FIRST, ap_finish, NULL)
 
-
 void *
 start_ap(void *arg __unused)
 {
@@ -140,6 +142,40 @@ start_ap(void *arg __unused)
 
 	return(NULL); /* NOTREACHED */
 }
+
+void*
+vmm_start_ap(void *arg __unused)
+{
+	void *stack;
+	struct guest_options options;
+	int error;
+
+	stack = mmap(NULL, KERNEL_STACK_SIZE, PROT_READ|PROT_WRITE|PROT_EXEC, MAP_ANON, -1, 0);
+	if (stack == MAP_FAILED) {
+		printf("Unable to allocate stack\n");
+		return -1;
+	}
+	options.ip = (register_t) start_ap; /* entry point for AP */
+	options.sp = (register_t) ((uint64_t)stack + KERNEL_STACK_SIZE - sizeof(register_t));
+
+	error = vmm_guest_ctl(VMM_GUEST_INIT, &options);
+	if (error) {
+		printf("VMM_GUEST_INIT failed. Fallback to classic...\n");
+		start_ap(NULL);
+	}
+
+	error = vmm_guest_ctl(VMM_GUEST_RUN, NULL);
+	if (error) {
+		printf("VMM_GUEST_RUN failed. Exiting...\n");
+
+		vmm_guest_ctl(VMM_GUEST_DESTROY, NULL);
+
+		return (NULL);
+	}
+
+	return(NULL);
+}
+
 
 /* storage for AP thread IDs */
 pthread_t ap_tids[MAXCPU];
@@ -447,7 +483,7 @@ start_all_aps(u_int boot_addr)
 		 * have already been enabled.
 		 */
 		cpu_disable_intr();
-		pthread_create(&ap_tids[x], NULL, start_ap, NULL);
+		pthread_create(&ap_tids[x], NULL, vmm_start_ap, NULL);
 		cpu_enable_intr();
 
 		while((smp_startup_mask & CPUMASK(x)) == 0) {
