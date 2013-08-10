@@ -1156,7 +1156,7 @@ restart:
 	 * VMCS field accordingly to the restored correctly by the VMX
 	 * module
 	 */
-	ERROR_IF(vmwrite(VMCS_HOST_CR3, (uint64_t) curthread->td_pcb->pcb_cr3));
+	ERROR_IF(vmwrite(VMCS_HOST_CR3, (uint64_t) rcr3()));
 
 	if (vti->launched) { /* vmresume */
 		dkprintf("\n\nVMM: vmx_vmrun: vmx_resume\n");
