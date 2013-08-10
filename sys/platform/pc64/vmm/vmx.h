@@ -24,15 +24,15 @@ typedef enum {
 struct vmx_pcpu_info {
 	unsigned char *vmxon_region_na;
 	unsigned char *vmxon_region;
-	unsigned char *loaded_vmcs;
+	struct vmx_thread_info *loaded_vmx;
 };
 
 struct vmx_thread_info {
 	unsigned char *vmcs_region_na;
 	unsigned char *vmcs_region;
 
-	int launched;
-	int last_cpu;
+	int launched;	/* vmclear or vmptrld called, must use vmlaunch */
+	int last_cpu;	/* per-cpu info cached in VMCS for this cpu */
 
 	/* Guest unsaved registers in VMCS */
 	struct trapframe guest; /* put them directly in trapframe */
