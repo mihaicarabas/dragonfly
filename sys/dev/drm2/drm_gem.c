@@ -26,7 +26,7 @@
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
  *
- * $FreeBSD: src/sys/dev/drm2/drm_gem.c,v 1.1 2012/05/22 11:07:44 kib Exp $
+ * $FreeBSD: head/sys/dev/drm2/drm_gem.c 247835 2013-03-05 09:49:34Z kib $"
  */
 
 #include "opt_vm.h"
@@ -71,7 +71,7 @@ drm_gem_init(struct drm_device *dev)
 	mm = kmalloc(sizeof(*mm), DRM_MEM_DRIVER, M_WAITOK);
 	dev->mm_private = mm;
 	if (drm_ht_create(&mm->offset_hash, 19) != 0) {
-		free(mm, DRM_MEM_DRIVER);
+		drm_free(mm, DRM_MEM_DRIVER);
 		return (ENOMEM);
 	}
 	mm->idxunr = new_unrhdr(0, DRM_GEM_MAX_IDX, NULL);
@@ -87,7 +87,7 @@ drm_gem_destroy(struct drm_device *dev)
 	dev->mm_private = NULL;
 	drm_ht_remove(&mm->offset_hash);
 	delete_unrhdr(mm->idxunr);
-	free(mm, DRM_MEM_DRIVER);
+	drm_free(mm, DRM_MEM_DRIVER);
 	drm_gem_names_fini(&dev->object_names);
 }
 
@@ -100,7 +100,7 @@ drm_gem_object_init(struct drm_device *dev, struct drm_gem_object *obj,
 	    ("Bad size %ju", (uintmax_t)size));
 
 	obj->dev = dev;
-	obj->vm_obj = default_pager_alloc(dev, size,
+	obj->vm_obj = default_pager_alloc(NULL, size,
 	    VM_PROT_READ | VM_PROT_WRITE, 0);
 
 	obj->refcount = 1;
@@ -145,7 +145,7 @@ drm_gem_object_alloc(struct drm_device *dev, size_t size)
 dealloc:
 	vm_object_deallocate(obj->vm_obj);
 free:
-	free(obj, DRM_MEM_DRIVER);
+	drm_free(obj, DRM_MEM_DRIVER);
 	return (NULL);
 }
 
@@ -442,16 +442,12 @@ drm_gem_free_mmap_offset(struct drm_gem_object *obj)
 }
 
 int
-drm_gem_mmap_single(struct cdev *kdev, vm_ooffset_t *offset, vm_size_t size,
+drm_gem_mmap_single(struct drm_device *dev, vm_ooffset_t *offset, vm_size_t size,
     struct vm_object **obj_res, int nprot)
 {
-	struct drm_device *dev;
 	struct drm_gem_object *gem_obj;
 	struct vm_object *vm_obj;
 
-	dev = drm_get_device_from_kdev(kdev);
-	if ((dev->driver->driver_features & DRIVER_GEM) == 0)
-		return (ENODEV);
 	DRM_LOCK(dev);
 	gem_obj = drm_gem_object_from_offset(dev, *offset);
 	if (gem_obj == NULL) {

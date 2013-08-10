@@ -50,7 +50,7 @@
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
  *
- * $FreeBSD: src/sys/dev/drm2/i915/i915_gem.c,v 1.2 2012/05/28 21:15:54 alc Exp $
+ * $FreeBSD: head/sys/dev/drm2/i915/i915_gem.c 253497 2013-07-20 13:52:40Z kib $
  */
 
 #include <sys/resourcevar.h>
@@ -188,9 +188,9 @@ i915_gem_free_object_tail(struct drm_i915_gem_object *obj)
 	drm_gem_object_release(&obj->base);
 	i915_gem_info_remove_obj(dev_priv, obj->base.size);
 
-	free(obj->page_cpu_valid, DRM_I915_GEM);
-	free(obj->bit_17, DRM_I915_GEM);
-	free(obj, DRM_I915_GEM);
+	drm_free(obj->page_cpu_valid, DRM_I915_GEM);
+	drm_free(obj->bit_17, DRM_I915_GEM);
+	drm_free(obj, DRM_I915_GEM);
 }
 
 void
@@ -323,14 +323,15 @@ i915_gem_init_ioctl(struct drm_device *dev, void *data,
 	    (args->gtt_end | args->gtt_start) & (PAGE_SIZE - 1))
 		return (-EINVAL);
 
-	if (mtx_initialized(&dev_priv->mm.gtt_space.unused_lock))
-		return (-EBUSY);
 	/*
 	 * XXXKIB. The second-time initialization should be guarded
 	 * against.
 	 */
-	return (i915_gem_do_init(dev, args->gtt_start, args->gtt_end,
-	    args->gtt_end));
+	lockmgr(&dev->dev_lock, LK_EXCLUSIVE|LK_RETRY|LK_CANRECURSE);
+	i915_gem_do_init(dev, args->gtt_start, args->gtt_end, args->gtt_end);
+	lockmgr(&dev->dev_lock, LK_RELEASE);
+
+	return 0;
 }
 
 int
@@ -713,7 +714,7 @@ i915_gem_busy_ioctl(struct drm_device *dev, void *data,
 			    M_WAITOK | M_ZERO);
 			ret = i915_add_request(obj->ring, NULL, request);
 			if (ret != 0)
-				free(request, DRM_I915_GEM);
+				drm_free(request, DRM_I915_GEM);
 		}
 
 		i915_gem_retire_requests_ring(obj->ring);
@@ -928,7 +929,7 @@ i915_gem_create(struct drm_file *file, struct drm_device *dev, uint64_t size,
 	if (ret != 0) {
 		drm_gem_object_release(&obj->base);
 		i915_gem_info_remove_obj(dev->dev_private, obj->base.size);
-		free(obj, DRM_I915_GEM);
+		drm_free(obj, DRM_I915_GEM);
 		return (-ret);
 	}
 
@@ -1032,7 +1033,9 @@ i915_gem_swap_io(struct drm_device *dev, struct drm_i915_gem_object *obj,
 #if 0 /* XXX */
 		vm_page_reference(m);
 #endif
+		vm_page_busy_wait(m, FALSE, "i915gem");
 		vm_page_unwire(m, 1);
+		vm_page_wakeup(m);
 		atomic_add_long(&i915_gem_wired_pages_cnt, -1);
 
 		if (ret != 0)
@@ -1143,7 +1146,7 @@ unlock:
 unlocked:
 	vm_page_unhold_pages(ma, npages);
 free_ma:
-	free(ma, DRM_I915_GEM);
+	drm_free(ma, DRM_I915_GEM);
 	return (ret);
 }
 
@@ -1240,9 +1243,6 @@ unlock:
 	return (ret);
 }
 
-#define PROC_LOCK(p)
-#define PROC_UNLOCK(p)
-
 int
 i915_gem_mmap_ioctl(struct drm_device *dev, void *data,
     struct drm_file *file)
@@ -1284,7 +1284,7 @@ i915_gem_mmap_ioctl(struct drm_device *dev, void *data,
 	DRM_UNLOCK(dev);
 	rv = vm_map_find(map, obj->vm_obj, args->offset, &addr, args->size,
 	    PAGE_SIZE, /* align */
-	    FALSE, /* fitit */
+	    TRUE, /* fitit */
 	    VM_MAPTYPE_NORMAL, /* maptype */
 	    VM_PROT_READ | VM_PROT_WRITE, /* prot */
 	    VM_PROT_READ | VM_PROT_WRITE, /* max */
@@ -1358,7 +1358,6 @@ unlocked_vmobj:
 	cause = ret = 0;
 	m = NULL;
 
-
 	if (i915_intr_pf) {
 		ret = i915_mutex_lock_interruptible(dev);
 		if (ret != 0) {
@@ -1367,6 +1366,25 @@ unlocked_vmobj:
 		}
 	} else
 		DRM_LOCK(dev);
+
+	/*
+	 * Since the object lock was dropped, other thread might have
+	 * faulted on the same GTT address and instantiated the
+	 * mapping for the page.  Recheck.
+	 */
+	VM_OBJECT_LOCK(vm_obj);
+	m = vm_page_lookup(vm_obj, OFF_TO_IDX(offset));
+	if (m != NULL) {
+		if ((m->flags & PG_BUSY) != 0) {
+			DRM_UNLOCK(dev);
+#if 0 /* XXX */
+			vm_page_sleep(m, "915pee");
+#endif
+			goto retry;
+		}
+		goto have_page;
+	} else
+		VM_OBJECT_UNLOCK(vm_obj);
 
 	/* Now bind it into the GTT if needed */
 	if (!obj->map_and_fenceable) {
@@ -1423,8 +1441,9 @@ unlocked_vmobj:
 		goto retry;
 	}
 	m->valid = VM_PAGE_BITS_ALL;
-	*mres = m;
 	vm_page_insert(m, vm_obj, OFF_TO_IDX(offset));
+have_page:
+	*mres = m;
 	vm_page_busy_try(m, false);
 
 	DRM_UNLOCK(dev);
@@ -1539,7 +1558,7 @@ i915_gem_alloc_object(struct drm_device *dev, size_t size)
 	obj = kmalloc(sizeof(*obj), DRM_I915_GEM, M_WAITOK | M_ZERO);
 
 	if (drm_gem_object_init(dev, &obj->base, size) != 0) {
-		free(obj, DRM_I915_GEM);
+		drm_free(obj, DRM_I915_GEM);
 		return (NULL);
 	}
 
@@ -1849,7 +1868,7 @@ i915_gem_object_set_to_full_cpu_read_domain(struct drm_i915_gem_object *obj)
 		}
 	}
 
-	free(obj->page_cpu_valid, DRM_I915_GEM);
+	drm_free(obj->page_cpu_valid, DRM_I915_GEM);
 	obj->page_cpu_valid = NULL;
 }
 
@@ -2188,11 +2207,13 @@ i915_gem_object_get_pages_gtt(struct drm_i915_gem_object *obj,
 failed:
 	for (j = 0; j < i; j++) {
 		m = obj->pages[j];
+		vm_page_busy_wait(m, FALSE, "i915gem");
 		vm_page_unwire(m, 0);
+		vm_page_wakeup(m);
 		atomic_add_long(&i915_gem_wired_pages_cnt, -1);
 	}
 	VM_OBJECT_UNLOCK(vm_obj);
-	free(obj->pages, DRM_I915_GEM);
+	drm_free(obj->pages, DRM_I915_GEM);
 	obj->pages = NULL;
 	return (-EIO);
 }
@@ -2249,12 +2270,14 @@ i915_gem_object_put_pages_gtt(struct drm_i915_gem_object *obj)
 		if (obj->madv == I915_MADV_WILLNEED)
 			vm_page_reference(m);
 #endif
+		vm_page_busy_wait(obj->pages[i], FALSE, "i915gem");
 		vm_page_unwire(obj->pages[i], 1);
+		vm_page_wakeup(obj->pages[i]);
 		atomic_add_long(&i915_gem_wired_pages_cnt, -1);
 	}
 	VM_OBJECT_UNLOCK(obj->base.vm_obj);
 	obj->dirty = 0;
-	free(obj->pages, DRM_I915_GEM);
+	drm_free(obj->pages, DRM_I915_GEM);
 	obj->pages = NULL;
 }
 
@@ -2551,7 +2574,7 @@ i915_wait_request(struct intel_ring_buffer *ring, uint32_t seqno, bool do_retire
 
 		ret = i915_add_request(ring, NULL, request);
 		if (ret != 0) {
-			free(request, DRM_I915_GEM);
+			drm_free(request, DRM_I915_GEM);
 			return (ret);
 		}
 
@@ -2739,7 +2762,7 @@ i915_gem_reset_ring_lists(struct drm_i915_private *dev_priv,
 
 		list_del(&request->list);
 		i915_gem_request_remove_from_client(request);
-		free(request, DRM_I915_GEM);
+		drm_free(request, DRM_I915_GEM);
 	}
 
 	while (!list_empty(&ring->active_list)) {
@@ -2844,7 +2867,7 @@ i915_gem_retire_requests_ring(struct intel_ring_buffer *ring)
 
 		list_del(&request->list);
 		i915_gem_request_remove_from_client(request);
-		free(request, DRM_I915_GEM);
+		drm_free(request, DRM_I915_GEM);
 	}
 
 	/* Move any buffers on the active list that are no longer referenced
@@ -3379,7 +3402,7 @@ i915_gem_retire_task_handler(void *arg, int pending)
 	dev = dev_priv->dev;
 
 	/* Come back later if the device is busy... */
-	if (!lockmgr(&dev->dev_struct_lock, LK_EXCLUSIVE|LK_NOWAIT)) {
+	if (lockmgr(&dev->dev_struct_lock, LK_EXCLUSIVE|LK_NOWAIT)) {
 		taskqueue_enqueue_timeout(dev_priv->tq,
 		    &dev_priv->mm.retire_task, hz);
 		return;
@@ -3404,7 +3427,7 @@ i915_gem_retire_task_handler(void *arg, int pending)
 			    M_WAITOK | M_ZERO);
 			if (ret || request == NULL ||
 			    i915_add_request(ring, NULL, request))
-				free(request, DRM_I915_GEM);
+				drm_free(request, DRM_I915_GEM);
 		}
 
 		idle &= list_empty(&ring->request_list);
@@ -3459,7 +3482,7 @@ i915_gem_init_phys_object(struct drm_device *dev, int id, int size, int align)
 	return (0);
 
 free_obj:
-	free(phys_obj, DRM_I915_GEM);
+	drm_free(phys_obj, DRM_I915_GEM);
 	return (ret);
 }
 
@@ -3478,7 +3501,7 @@ i915_gem_free_phys_object(struct drm_device *dev, int id)
 		i915_gem_detach_phys_object(dev, phys_obj->cur_obj);
 
 	drm_pci_free(dev, phys_obj->handle);
-	free(phys_obj, DRM_I915_GEM);
+	drm_free(phys_obj, DRM_I915_GEM);
 	dev_priv->mm.phys_objs[id - 1] = NULL;
 }
 
@@ -3525,7 +3548,9 @@ i915_gem_detach_phys_object(struct drm_device *dev,
 		vm_page_reference(m);
 #endif
 		vm_page_dirty(m);
+		vm_page_busy_wait(m, FALSE, "i915gem");
 		vm_page_unwire(m, 0);
+		vm_page_wakeup(m);
 		atomic_add_long(&i915_gem_wired_pages_cnt, -1);
 	}
 	VM_OBJECT_UNLOCK(obj->base.vm_obj);
@@ -3590,7 +3615,9 @@ i915_gem_attach_phys_object(struct drm_device *dev,
 #if 0 /* XXX */
 		vm_page_reference(m);
 #endif
+		vm_page_busy_wait(m, FALSE, "i915gem");
 		vm_page_unwire(m, 0);
+		vm_page_wakeup(m);
 		atomic_add_long(&i915_gem_wired_pages_cnt, -1);
 	}
 	VM_OBJECT_UNLOCK(obj->base.vm_obj);
@@ -3646,7 +3673,7 @@ i915_gem_lowmem(void *arg)
 	dev = arg;
 	dev_priv = dev->dev_private;
 
-	if (!lockmgr(&dev->dev_struct_lock, LK_EXCLUSIVE|LK_NOWAIT))
+	if (lockmgr(&dev->dev_struct_lock, LK_EXCLUSIVE|LK_NOWAIT))
 		return;
 
 rescan:

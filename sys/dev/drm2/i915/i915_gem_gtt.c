@@ -199,12 +199,13 @@ i915_gem_cleanup_aliasing_ppgtt(struct drm_device *dev)
 	for (i = 0; i < ppgtt->num_pd_entries; i++) {
 		m = ppgtt->pt_pages[i];
 		if (m != NULL) {
+			vm_page_busy_wait(m, FALSE, "i915gem");
 			vm_page_unwire(m, 0);
 			vm_page_free(m);
 		}
 	}
-	free(ppgtt->pt_pages, DRM_I915_GEM);
-	free(ppgtt, DRM_I915_GEM);
+	drm_free(ppgtt->pt_pages, DRM_I915_GEM);
+	drm_free(ppgtt, DRM_I915_GEM);
 }
 
 

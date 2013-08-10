@@ -61,11 +61,9 @@
 
 /*
  * The above functions are expanded inline in the statically-linked
- * kernel.  Lock prefixes are generated if an SMP kernel is being
- * built, or if user code is using these functions.
+ * kernel and lock prefixes are generated.
  *
  * Kernel modules call real functions which are built into the kernel.
- * This allows kernel modules to be portable between UP and SMP systems.
  */
 #if defined(KLD_MODULE)
 #define ATOMIC_ASM(NAME, TYPE, OP, CONS, V)		\
@@ -603,6 +601,9 @@ ATOMIC_STORE_LOAD(long, "cmpxchgq %0,%1",  "xchgq %1,%0");
 #define	atomic_cmpset_rel_32	atomic_cmpset_rel_int
 #define	atomic_readandclear_32	atomic_readandclear_int
 #define	atomic_fetchadd_32	atomic_fetchadd_int
+
+/* Operations on 64-bit quad words. */
+#define	atomic_load_acq_64	atomic_load_acq_long
 
 /* Operations on pointers. */
 #define atomic_set_ptr(p, v) \

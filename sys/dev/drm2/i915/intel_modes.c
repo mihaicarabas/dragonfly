@@ -22,7 +22,7 @@
  * FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
  * DEALINGS IN THE SOFTWARE.
  *
- * $FreeBSD: src/sys/dev/drm2/i915/intel_modes.c,v 1.1 2012/05/22 11:07:44 kib Exp $
+ * $FreeBSD: head/sys/dev/drm2/i915/intel_modes.c 249041 2013-04-03 08:27:35Z dumbbell $
  */
 
 #include <dev/drm2/drmP.h>
@@ -44,13 +44,13 @@ bool intel_ddc_probe(struct intel_encoder *intel_encoder, int ddc_bus)
 	u8 buf[2];
 	struct iic_msg msgs[] = {
 		{
-			.slave = DDC_ADDR,
+			.slave = DDC_ADDR << 1,
 			.flags = IIC_M_WR,
 			.len = 1,
 			.buf = out_buf,
 		},
 		{
-			.slave = DDC_ADDR,
+			.slave = DDC_ADDR << 1,
 			.flags = IIC_M_RD,
 			.len = 1,
 			.buf = buf,
@@ -80,7 +80,7 @@ intel_ddc_get_modes(struct drm_connector *connector, device_t adapter)
 		ret = drm_add_edid_modes(connector, edid);
 		drm_edid_to_eld(connector, edid);
 		connector->display_info.raw_edid = NULL;
-		free(edid, DRM_MEM_KMS);
+		drm_free(edid, DRM_MEM_KMS);
 	}
 
 	return ret;

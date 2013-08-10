@@ -29,7 +29,7 @@
  *    Rickard E. (Rik) Faith <faith@valinux.com>
  *    Gareth Hughes <gareth@valinux.com>
  *
- * $FreeBSD: src/sys/dev/drm2/drmP.h,v 1.1 2012/05/22 11:07:44 kib Exp $
+ * $FreeBSD: head/sys/dev/drm2/drmP.h 248084 2013-03-09 02:32:23Z attilio $
  */
 
 #ifndef _DRM_P_H_
@@ -220,6 +220,7 @@ typedef void			irqreturn_t;
 #define IRQ_NONE		/* nothing */
 
 #define unlikely(x)            __builtin_expect(!!(x), 0)
+#define likely(x)              __builtin_expect(!!(x), 1)
 #define container_of(ptr, type, member) ({			\
 	__typeof( ((type *)0)->member ) *__mptr = (ptr);	\
 	(type *)( (char *)__mptr - offsetof(type,member) );})
@@ -336,11 +337,20 @@ for ( ret = 0 ; !ret && !(condition) ; ) {			\
 }
 
 __inline static void
-free(void *addr, struct malloc_type *type)
+vm_page_unhold_pages(vm_page_t *ma, int count)
 {
-        if (addr != NULL)
-                kfree(addr, type);
+	int i;
+
+	for (i = 0; i < count; i++)
+		vm_page_unhold(ma[i]);
 }
+
+vm_page_t
+vm_phys_fictitious_to_vm_page(vm_paddr_t pa);
+
+int
+vm_phys_fictitious_reg_range(vm_paddr_t start, vm_paddr_t end, int pat_mode);
+
 
 #define DRM_ERROR(fmt, ...) \
 	kprintf("error: [" DRM_NAME ":pid%d:%s] *ERROR* " fmt,		\
@@ -899,6 +909,7 @@ struct drm_device {
 	struct drm_minor *control;		/**< Control node for card */
 	struct drm_minor *primary;		/**< render type primary screen head */
 
+	void		  *drm_ttm_bo;
 	struct unrhdr	  *drw_unrhdr;
 	/* RB tree of drawable infos */
 	RB_HEAD(drawable_tree, bsd_drm_drawable_info) drw_head;
@@ -1298,9 +1309,13 @@ void drm_gem_release(struct drm_device *dev, struct drm_file *file_priv);
 
 int drm_gem_create_mmap_offset(struct drm_gem_object *obj);
 void drm_gem_free_mmap_offset(struct drm_gem_object *obj);
-int drm_gem_mmap_single(struct cdev *kdev, vm_ooffset_t *offset, vm_size_t size,
-    struct vm_object **obj_res, int nprot);
+int drm_gem_mmap_single(struct drm_device *dev, vm_ooffset_t *offset,
+    vm_size_t size, struct vm_object **obj_res, int nprot);
 void drm_gem_pager_dtr(void *obj);
+
+struct ttm_bo_device;
+int ttm_bo_mmap_single(struct ttm_bo_device *bdev, vm_ooffset_t *offset,
+    vm_size_t size, struct vm_object **obj_res, int nprot);
 
 void drm_device_lock_mtx(struct drm_device *dev);
 void drm_device_unlock_mtx(struct drm_device *dev);
@@ -1347,15 +1362,16 @@ drm_realloc(void *oldpt, size_t oldsize, size_t size,
 {
 	void *res;
 	res = krealloc(oldpt, size, area, M_NOWAIT);
-	if (res == NULL)
-		free(oldpt,area);
+	if (res == NULL && oldpt != NULL)
+		kfree(oldpt,area);
 	return res;
 }
 
 static __inline__ void
-drm_free(void *pt, size_t size, struct malloc_type *area)
+drm_free(void *pt, struct malloc_type *area)
 {
-	free(pt, area);
+	if (pt != NULL)
+		kfree(pt, area);
 }
 
 /* Inline replacements for DRM_IOREMAP macros */
@@ -1401,6 +1417,16 @@ do {									\
 
 #define	KTR_DRM		KTR_DEV
 #define	KTR_DRM_REG	KTR_SPARE3
+
+
+/* FreeBSD compatibility macros */
+#define PROC_LOCK(p)
+#define PROC_UNLOCK(p)
+
+#define VM_OBJECT_RLOCK(object)		VM_OBJECT_LOCK(object)
+#define VM_OBJECT_RUNLOCK(object)	VM_OBJECT_UNLOCK(object)
+#define VM_OBJECT_WLOCK(object)		VM_OBJECT_LOCK(object)
+#define VM_OBJECT_WUNLOCK(object)	VM_OBJECT_UNLOCK(object)
 
 #endif /* __KERNEL__ */
 #endif /* _DRM_P_H_ */

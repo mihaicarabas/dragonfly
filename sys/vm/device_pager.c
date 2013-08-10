@@ -66,7 +66,7 @@ static TAILQ_HEAD(, vm_page) dev_freepages_list =
 static MALLOC_DEFINE(M_FICTITIOUS_PAGES, "device-mapped pages",
 		"Device mapped pages");
 
-static vm_page_t dev_pager_getfake (vm_paddr_t);
+static vm_page_t dev_pager_getfake (vm_paddr_t, int);
 static void dev_pager_putfake (vm_page_t);
 
 struct pagerops devicepagerops = {
@@ -175,13 +175,11 @@ void
 cdev_pager_free_page(vm_object_t object, vm_page_t m)
 {
 	if (object->type == OBJT_MGTDEVICE) {
-		kprintf("x");
 		KKASSERT((m->flags & PG_FICTITIOUS) != 0);
 		pmap_page_protect(m, VM_PROT_NONE);
 		vm_page_remove(m);
 		vm_page_wakeup(m);
 	} else if (object->type == OBJT_DEVICE) {
-		kprintf("y");
 		TAILQ_REMOVE(&object->un_pager.devp.devp_pglist, m, pageq);
 		dev_pager_putfake(m);
 	}
@@ -220,17 +218,15 @@ dev_pager_dealloc(vm_object_t object)
 static int
 dev_pager_getpage(vm_object_t object, vm_page_t *mpp, int seqaccess)
 {
-	vm_ooffset_t offset;
 	vm_page_t page;
 	int error;
 
 	mtx_lock(&dev_pager_mtx);
 
 	page = *mpp;
-	offset = page->pindex << PAGE_SHIFT;
 
 	error = object->un_pager.devp.ops->cdev_pg_fault(object,
-            offset, PROT_READ, mpp);
+            IDX_TO_OFF(page->pindex), PROT_READ, mpp);
 
 	mtx_unlock(&dev_pager_mtx);
 
@@ -260,11 +256,13 @@ dev_pager_haspage(vm_object_t object, vm_pindex_t pindex)
  * The caller must hold dev_pager_mtx
  */
 static vm_page_t
-dev_pager_getfake(vm_paddr_t paddr)
+dev_pager_getfake(vm_paddr_t paddr, int pat_mode)
 {
 	vm_page_t m;
 
 	m = kmalloc(sizeof(*m), M_FICTITIOUS_PAGES, M_WAITOK|M_ZERO);
+
+	pmap_page_init(m);
 
 	m->flags = PG_BUSY | PG_FICTITIOUS;
 	m->valid = VM_PAGE_BITS_ALL;
@@ -276,6 +274,7 @@ dev_pager_getfake(vm_paddr_t paddr)
 	m->wire_count = 1;
 	m->hold_count = 0;
 	m->phys_addr = paddr;
+	m->pat_mode = pat_mode;
 
 	return (m);
 }
@@ -337,11 +336,11 @@ static int old_dev_pager_fault(vm_object_t object, vm_ooffset_t offset,
 {
 	vm_paddr_t paddr;
 	vm_page_t page;
+	vm_offset_t pidx = OFF_TO_IDX(offset);
 	cdev_t dev;
 
 	page = *mres;
 	dev = object->handle;
-	offset = page->pindex;
 
 	paddr = pmap_phys_address(
 		    dev_dmmap(dev, offset, prot));
@@ -360,14 +359,14 @@ static int old_dev_pager_fault(vm_object_t object, vm_ooffset_t offset,
 		 * Replace the passed in reqpage page with our own fake page
 		 * and free up all the original pages.
 		 */
-		page = dev_pager_getfake(paddr);
+		page = dev_pager_getfake(paddr, object->memattr);
 		TAILQ_INSERT_TAIL(&object->un_pager.devp.devp_pglist,
 				  page, pageq);
 		vm_object_hold(object);
 		vm_page_free(*mres);
-		if (vm_page_insert(page, object, offset) == FALSE) {
+		if (vm_page_insert(page, object, pidx) == FALSE) {
 			panic("dev_pager_getpage: page (%p,%016jx) exists",
-			      object, (uintmax_t)offset);
+			      object, (uintmax_t)pidx);
 		}
 		vm_object_drop(object);
 	}

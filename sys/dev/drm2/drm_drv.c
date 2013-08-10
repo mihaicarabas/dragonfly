@@ -26,7 +26,7 @@
  *    Rickard E. (Rik) Faith <faith@valinux.com>
  *    Gareth Hughes <gareth@valinux.com>
  *
- * $FreeBSD: src/sys/dev/drm2/drm_drv.c,v 1.1 2012/05/22 11:07:44 kib Exp $
+ * $FreeBSD: head/sys/dev/drm2/drm_drv.c 247835 2013-03-05 09:49:34Z kib $
  */
 
 /** @file drm_drv.c
@@ -43,9 +43,10 @@
 #include <dev/drm2/drm_mode.h>
 
 #ifdef DRM_DEBUG_DEFAULT_ON
-int drm_debug_flag = 1;
+int drm_debug_flag = (DRM_DEBUGBITS_DEBUG | DRM_DEBUGBITS_KMS |
+    DRM_DEBUGBITS_FAILED_IOCTL);
 #else
-int drm_debug_flag = 2;
+int drm_debug_flag = 0;
 #endif
 int drm_notyet_flag = 0;
 
@@ -82,7 +83,6 @@ DECLARE_MODULE(drmn, drm_mod, SI_SUB_DRIVERS, SI_ORDER_FIRST);
 MODULE_VERSION(drmn, 1);
 MODULE_DEPEND(drmn, agp, 1, 1, 1);
 MODULE_DEPEND(drmn, pci, 1, 1, 1);
-MODULE_DEPEND(drmn, mem, 1, 1, 1);
 MODULE_DEPEND(drmn, iicbus, 1, 1, 1);
 
 static drm_ioctl_desc_t		  drm_ioctls[256] = {
@@ -189,7 +189,7 @@ static struct dev_ops drm_cdevsw = {
 	.d_ioctl =	drm_ioctl,
 	.d_kqfilter =	drm_kqfilter,
 	.d_mmap =	drm_mmap,
-	.d_mmap_single =	drm_mmap_single,
+	.d_mmap_single = drm_mmap_single,
 };
 
 static int drm_msi = 1;	/* Enable by default. */
@@ -227,8 +227,7 @@ int drm_probe(device_t kdev, drm_pci_id_list_t *idlist)
 	vendor = pci_get_vendor(kdev);
 	device = pci_get_device(kdev);
 
-	if (pci_get_class(kdev) != PCIC_DISPLAY
-	    || pci_get_subclass(kdev) != PCIS_DISPLAY_VGA)
+	if (pci_get_class(kdev) != PCIC_DISPLAY)
 		return ENXIO;
 
 	id_entry = drm_find_description(vendor, device, idlist);
@@ -406,7 +405,7 @@ static int drm_lastclose(struct drm_device *dev)
 		drm_irq_uninstall(dev);
 
 	if (dev->unique) {
-		free(dev->unique, DRM_MEM_DRIVER);
+		drm_free(dev->unique, DRM_MEM_DRIVER);
 		dev->unique = NULL;
 		dev->unique_len = 0;
 	}
@@ -414,7 +413,7 @@ static int drm_lastclose(struct drm_device *dev)
 	for (i = 0; i < DRM_HASH_SIZE; i++) {
 		for (pt = dev->magiclist[i].head; pt; pt = next) {
 			next = pt->next;
-			free(pt, DRM_MEM_MAGIC);
+			drm_free(pt, DRM_MEM_MAGIC);
 		}
 		dev->magiclist[i].head = dev->magiclist[i].tail = NULL;
 	}
@@ -436,7 +435,7 @@ static int drm_lastclose(struct drm_device *dev)
 			if (entry->bound)
 				drm_agp_unbind_memory(entry->handle);
 			drm_agp_free_memory(entry->handle);
-			free(entry, DRM_MEM_AGPLISTS);
+			drm_free(entry, DRM_MEM_AGPLISTS);
 		}
 		dev->agp->memory = NULL;
 
@@ -623,7 +622,7 @@ static void drm_unload(struct drm_device *dev)
 	}
 
 	if (dev->agp) {
-		free(dev->agp, DRM_MEM_AGPLISTS);
+		drm_free(dev->agp, DRM_MEM_AGPLISTS);
 		dev->agp = NULL;
 	}
 
@@ -784,7 +783,7 @@ int drm_close(struct dev_close_args *ap)
 	if (dev->driver->postclose != NULL)
 		dev->driver->postclose(dev, file_priv);
 	TAILQ_REMOVE(&dev->files, file_priv, link);
-	free(file_priv, DRM_MEM_FILES);
+	drm_free(file_priv, DRM_MEM_FILES);
 
 	/* ========================================================
 	 * End inline drm_release
@@ -928,6 +927,27 @@ drm_add_busid_modesetting(struct drm_device *dev, struct sysctl_ctx_list *ctx,
 	return (0);
 }
 
+int
+drm_mmap_single(struct dev_mmap_single_args *ap)
+{
+	struct drm_device *dev;
+	struct cdev *kdev = ap->a_head.a_dev;
+	vm_ooffset_t *offset = ap->a_offset;
+	vm_size_t size = ap->a_size;
+	struct vm_object **obj_res = ap->a_object;
+	int nprot = ap->a_nprot;
+
+	dev = drm_get_device_from_kdev(kdev);
+	if ((dev->driver->driver_features & DRIVER_GEM) != 0) {
+		return (drm_gem_mmap_single(dev, offset, size, obj_res, nprot));
+	} else if (dev->drm_ttm_bo != NULL) {
+		return (ttm_bo_mmap_single(dev->drm_ttm_bo, offset, size,
+		    obj_res, nprot));
+	} else {
+		return (ENODEV);
+	}
+}
+
 #if DRM_LINUX
 
 #include <sys/sysproto.h>
@@ -968,11 +988,82 @@ drm_linux_ioctl(DRM_STRUCTPROC *p, struct linux_ioctl_args* args)
 }
 #endif /* DRM_LINUX */
 
+/*
+ * Check if dmi_system_id structure matches system DMI data
+ */
+static bool
+dmi_found(const struct dmi_system_id *dsi)
+{
+	int i, slot;
+	bool found = false;
+	char *sys_vendor, *board_vendor, *product_name, *board_name;
+
+	sys_vendor = kgetenv("smbios.system.maker");
+	board_vendor = kgetenv("smbios.planar.maker");
+	product_name = kgetenv("smbios.system.product");
+	board_name = kgetenv("smbios.planar.product");
+
+	for (i = 0; i < NELEM(dsi->matches); i++) {
+		slot = dsi->matches[i].slot;
+		switch (slot) {
+		case DMI_NONE:
+			break;
+		case DMI_SYS_VENDOR:
+			if (sys_vendor != NULL &&
+			    !strcmp(sys_vendor, dsi->matches[i].substr))
+				break;
+			else
+				goto done;
+		case DMI_BOARD_VENDOR:
+			if (board_vendor != NULL &&
+			    !strcmp(board_vendor, dsi->matches[i].substr))
+				break;
+			else
+				goto done;
+		case DMI_PRODUCT_NAME:
+			if (product_name != NULL &&
+			    !strcmp(product_name, dsi->matches[i].substr))
+				break;
+			else
+				goto done;
+		case DMI_BOARD_NAME:
+			if (board_name != NULL &&
+			    !strcmp(board_name, dsi->matches[i].substr))
+				break;
+			else
+				goto done;
+		default:
+			goto done;
+		}
+	}
+	found = true;
+
+done:
+	if (sys_vendor != NULL)
+		kfreeenv(sys_vendor);
+	if (board_vendor != NULL)
+		kfreeenv(board_vendor);
+	if (product_name != NULL)
+		kfreeenv(product_name);
+	if (board_name != NULL)
+		kfreeenv(board_name);
+
+	return found;
+}
+
 bool
 dmi_check_system(const struct dmi_system_id *sysid)
 {
+	const struct dmi_system_id *dsi;
+	int num = 0;
 
-	/* XXXKIB */
-	return (false);
+	for (dsi = sysid; dsi->matches[0].slot != 0 ; dsi++) {
+		if (dmi_found(dsi)) {
+			num++;
+			if (dsi->callback && dsi->callback(dsi))
+				break;
+		}
+	}
+	return (num);
 }
 

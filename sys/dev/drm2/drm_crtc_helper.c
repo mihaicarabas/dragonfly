@@ -58,11 +58,11 @@ drm_fetch_cmdline_mode_from_kenv(struct drm_connector *connector,
 		    connector, cmdline_mode);
 		kfreeenv(tun_mode);
 	}
-	free(tun_var_name, M_TEMP);
+	drm_free(tun_var_name, M_TEMP);
 	return (res);
 }
 
-static bool drm_kms_helper_poll = true;
+static bool drm_kms_helper_poll = false; // XXX fix and reenable
 
 static void drm_mode_validate_flag(struct drm_connector *connector,
 				   int flags)
@@ -750,9 +750,9 @@ int drm_crtc_helper_set_config(struct drm_mode_set *set)
 		}
 	}
 
-	free(save_connectors, DRM_MEM_KMS);
-	free(save_encoders, DRM_MEM_KMS);
-	free(save_crtcs, DRM_MEM_KMS);
+	drm_free(save_connectors, DRM_MEM_KMS);
+	drm_free(save_encoders, DRM_MEM_KMS);
+	drm_free(save_crtcs, DRM_MEM_KMS);
 	return 0;
 
 fail:
@@ -778,9 +778,9 @@ fail:
 				      save_set.y, save_set.fb))
 		DRM_ERROR("failed to restore config after modeset failure\n");
 
-	free(save_connectors, DRM_MEM_KMS);
-	free(save_encoders, DRM_MEM_KMS);
-	free(save_crtcs, DRM_MEM_KMS);
+	drm_free(save_connectors, DRM_MEM_KMS);
+	drm_free(save_encoders, DRM_MEM_KMS);
+	drm_free(save_crtcs, DRM_MEM_KMS);
 	return ret;
 }
 
@@ -980,7 +980,7 @@ static void output_poll_execute(void *ctx, int pending)
 	}
 
 	if (repoll) {
-		taskqueue_enqueue_timeout(taskqueue_thread,
+		taskqueue_enqueue_timeout(taskqueue_thread[mycpuid],
 		    &dev->mode_config.output_poll_task,
 		    DRM_OUTPUT_POLL_PERIOD);
 	}
@@ -990,7 +990,7 @@ void drm_kms_helper_poll_disable(struct drm_device *dev)
 {
 	if (!dev->mode_config.poll_enabled)
 		return;
-	taskqueue_cancel_timeout(taskqueue_thread,
+	taskqueue_cancel_timeout(taskqueue_thread[mycpuid],
 	    &dev->mode_config.output_poll_task, NULL);
 }
 
@@ -1008,7 +1008,7 @@ void drm_kms_helper_poll_enable(struct drm_device *dev)
 	}
 
 	if (poll) {
-		taskqueue_enqueue_timeout(taskqueue_thread,
+		taskqueue_enqueue_timeout(taskqueue_thread[mycpuid],
 		    &dev->mode_config.output_poll_task, DRM_OUTPUT_POLL_PERIOD);
 	}
 }
@@ -1016,7 +1016,7 @@ void drm_kms_helper_poll_enable(struct drm_device *dev)
 void drm_kms_helper_poll_init(struct drm_device *dev)
 {
 
-	TIMEOUT_TASK_INIT(taskqueue_thread, &dev->mode_config.output_poll_task,
+	TIMEOUT_TASK_INIT(taskqueue_thread[mycpuid], &dev->mode_config.output_poll_task,
 	    0, output_poll_execute, dev);
 	dev->mode_config.poll_enabled = true;
 
@@ -1034,9 +1034,9 @@ void drm_helper_hpd_irq_event(struct drm_device *dev)
 		return;
 
 	/* kill timer and schedule immediate execution, this doesn't block */
-	taskqueue_cancel_timeout(taskqueue_thread,
+	taskqueue_cancel_timeout(taskqueue_thread[mycpuid],
 	    &dev->mode_config.output_poll_task, NULL);
 	if (drm_kms_helper_poll)
-		taskqueue_enqueue_timeout(taskqueue_thread,
+		taskqueue_enqueue_timeout(taskqueue_thread[mycpuid],
 		    &dev->mode_config.output_poll_task, 0);
 }

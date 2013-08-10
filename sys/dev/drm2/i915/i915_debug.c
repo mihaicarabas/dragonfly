@@ -1580,7 +1580,9 @@ struct i915_info_sysctl_thunk {
 static int
 i915_info_sysctl_handler(SYSCTL_HANDLER_ARGS)
 {
+#if 0
 	struct sbuf m;
+#endif
 	struct i915_info_sysctl_thunk *thunk;
 	struct drm_device *dev;
 	drm_i915_private_t *dev_priv;
@@ -1591,6 +1593,7 @@ i915_info_sysctl_handler(SYSCTL_HANDLER_ARGS)
 	dev_priv = dev->dev_private;
 	if (dev_priv == NULL)
 		return (EBUSY);
+#if 0
 	error = sysctl_wire_old_buffer(req, 0);
 	if (error != 0)
 		return (error);
@@ -1600,6 +1603,9 @@ i915_info_sysctl_handler(SYSCTL_HANDLER_ARGS)
 	if (error == 0)
 		error = sbuf_finish(&m);
 	sbuf_delete(&m);
+#else
+	error = 0;
+#endif
 	return (error);
 }
 
@@ -1677,5 +1683,5 @@ void
 i915_sysctl_cleanup(struct drm_device *dev)
 {
 
-	free(dev->sysctl_private, DRM_MEM_DRIVER);
+	drm_free(dev->sysctl_private, DRM_MEM_DRIVER);
 }

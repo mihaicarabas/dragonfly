@@ -273,10 +273,6 @@ struct vpgqueues {
 
 extern struct vpgqueues vm_page_queues[PQ_COUNT];
 
-#define	PA_LOCKPTR(pa)	&pa_lock[pa_index((pa)) % PA_LOCK_COUNT].data
-
-#define	vm_page_lockptr(m)	(PA_LOCKPTR(VM_PAGE_TO_PHYS((m))))
-
 /*
  * These are the flags defined for vm_page.
  *
@@ -435,6 +431,7 @@ void vm_page_queue_spin_unlock(vm_page_t);
 void vm_page_queues_spin_unlock(u_short);
 void vm_page_and_queue_spin_unlock(vm_page_t m);
 
+void vm_page_init(vm_page_t m);
 void vm_page_io_finish(vm_page_t m);
 void vm_page_io_start(vm_page_t m);
 void vm_page_need_commit(vm_page_t m);
@@ -447,7 +444,7 @@ void vm_page_pcpu_cache(void);
 vm_page_t vm_page_alloc (struct vm_object *, vm_pindex_t, int);
 vm_page_t vm_page_alloc_contig(vm_paddr_t low, vm_paddr_t high,
                      unsigned long alignment, unsigned long boundary,
-		     unsigned long size);
+		     unsigned long size, vm_memattr_t memattr);
 vm_page_t vm_page_grab (struct vm_object *, vm_pindex_t, int);
 void vm_page_cache (vm_page_t);
 int vm_page_try_to_cache (vm_page_t);
@@ -467,7 +464,6 @@ void vm_page_remove (vm_page_t);
 void vm_page_rename (vm_page_t, struct vm_object *, vm_pindex_t);
 void vm_page_startup (void);
 void vm_page_unmanage (vm_page_t);
-void vm_page_unhold_pages(vm_page_t *ma, int count);
 void vm_page_unwire (vm_page_t, int);
 void vm_page_wire (vm_page_t);
 void vm_page_unqueue (vm_page_t);

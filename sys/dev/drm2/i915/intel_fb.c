@@ -23,7 +23,7 @@
  * Authors:
  *     David Airlie
  *
- * $FreeBSD: src/sys/dev/drm2/i915/intel_fb.c,v 1.1 2012/05/22 11:07:44 kib Exp $
+ * $FreeBSD: head/sys/dev/drm2/i915/intel_fb.c 251961 2013-06-18 20:19:09Z kib $
  */
 
 #include <dev/drm2/drmP.h>
@@ -206,6 +206,8 @@ static void intel_fbdev_destroy(struct drm_device *dev,
 	}
 }
 
+extern int sc_txtmouse_no_retrace_wait;
+
 int intel_fbdev_init(struct drm_device *dev)
 {
 	struct intel_fbdev *ifbdev;
@@ -222,12 +224,13 @@ int intel_fbdev_init(struct drm_device *dev)
 				 dev_priv->num_pipe,
 				 INTELFB_CONN_LIMIT);
 	if (ret) {
-		free(ifbdev, DRM_MEM_KMS);
+		drm_free(ifbdev, DRM_MEM_KMS);
 		return ret;
 	}
 
 	drm_fb_helper_single_add_all_connectors(&ifbdev->helper);
 	drm_fb_helper_initial_config(&ifbdev->helper, 32);
+	sc_txtmouse_no_retrace_wait = 1;
 	return 0;
 }
 
@@ -238,7 +241,7 @@ void intel_fbdev_fini(struct drm_device *dev)
 		return;
 
 	intel_fbdev_destroy(dev, dev_priv->fbdev);
-	free(dev_priv->fbdev, DRM_MEM_KMS);
+	drm_free(dev_priv->fbdev, DRM_MEM_KMS);
 	dev_priv->fbdev = NULL;
 }
 

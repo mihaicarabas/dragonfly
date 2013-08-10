@@ -36,6 +36,7 @@
 #include <sys/malloc.h>
 #include <sys/proc.h>
 
+#include <dev/drm2/drmP.h>
 #include <dev/drm2/drm_gem_names.h>
 
 MALLOC_DEFINE(M_GEM_NAMES, "gem_name", "Hash headers for the gem names");
@@ -141,7 +142,7 @@ drm_gem_name_create(struct drm_gem_names *names, void *p, uint32_t *name)
 	np->name = alloc_unr(names->unr);
 	if (np->name == -1) {
 		lockmgr(&names->lock, LK_RELEASE);
-		free(np, M_GEM_NAMES);
+		drm_free(np, M_GEM_NAMES);
 		return (ENOMEM);
 	}
 	*name = np->name;
@@ -158,7 +159,7 @@ drm_gem_names_delete_name(struct drm_gem_names *names, struct drm_gem_name *np)
 	LIST_REMOVE(np, link);
 	lockmgr(&names->lock, LK_RELEASE);
 	free_unr(names->unr, np->name);
-	free(np, M_GEM_NAMES);
+	drm_free(np, M_GEM_NAMES);
 }
 
 void *
