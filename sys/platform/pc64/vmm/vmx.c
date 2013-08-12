@@ -869,8 +869,6 @@ vmx_handle_cpu_migration(void)
 		/* Guest related register */
 		ERROR_IF(vmwrite(VMCS_GUEST_GDTR_BASE, (uint64_t) &gdt[gd->gd_cpuid * NGDT]));
 		ERROR_IF(vmwrite(VMCS_GUEST_GDTR_LIMIT, (uint64_t) (NGDT * sizeof(gdt[0]) - 1)));
-		ERROR_IF(vmwrite(VMCS_GUEST_IDTR_BASE, (uint64_t) r_idt_arr[gd->gd_cpuid].rd_base));
-		ERROR_IF(vmwrite(VMCS_GUEST_IDTR_LIMIT, (uint64_t) r_idt_arr[gd->gd_cpuid].rd_limit));
 
 		/*
 		 * Indicates which cpu the per-cpu fields are synchronized
