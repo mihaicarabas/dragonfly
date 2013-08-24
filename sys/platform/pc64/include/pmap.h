@@ -259,18 +259,18 @@ RB_PROTOTYPE2(pv_entry_rb_tree, pv_entry, pv_entry,
 #define	PG_V_IDX		1
 #define	PG_RW_IDX		2
 #define	PG_U_IDX		3
-#define	PG_PTE_CACHE_IDX	4
-#define	PG_PDE_CACHE_IDX	5
-#define	PG_A_IDX		6
-#define	PG_M_IDX		7
-#define	PG_PS_IDX		8
-#define	PG_G_IDX		9
-#define	PG_W_IDX		10
-#define	PG_MANAGED_IDX		11
-#define	PG_DEVICE_IDX		12
-#define	PG_PROT_IDX		13
-#define	PG_N_IDX		14
-#define	PG_BITS_SIZE		15
+#define	PG_A_IDX		4
+#define	PG_M_IDX		5
+#define	PG_PS_IDX		6
+#define	PG_G_IDX		7
+#define	PG_W_IDX		8
+#define	PG_MANAGED_IDX		9
+#define	PG_DEVICE_IDX		10
+#define	PG_N_IDX		11
+#define	PG_BITS_SIZE		12
+
+#define PROTECTION_CODES_SIZE	8
+#define PAT_INDEX_SIZE  8
 
 struct pmap {
 	pml4_entry_t		*pm_pml4;	/* KVA of level 4 page table */
@@ -286,7 +286,9 @@ struct pmap {
 	struct spinlock		pm_spin;
 	struct lwkt_token	pm_token;
 	uint64_t		pmap_bits[PG_BITS_SIZE];
-	int			protection_codes[8];
+	int			protection_codes[PROTECTION_CODES_SIZE];
+	pt_entry_t		pmap_cache_bits[PAT_INDEX_SIZE];
+	pt_entry_t		pmap_cache_mask;
 };
 
 #define CPUMASK_LOCK		CPUMASK(SMP_MAXCPU)

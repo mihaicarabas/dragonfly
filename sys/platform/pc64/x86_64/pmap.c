@@ -149,7 +149,7 @@
  */
 #define pte_prot(m, p)		\
 	(m->protection_codes[p & (VM_PROT_READ|VM_PROT_WRITE|VM_PROT_EXECUTE)])
-static int protection_codes[8];
+static int protection_codes[PROTECTION_CODES_SIZE];
 
 struct pmap kernel_pmap;
 static TAILQ_HEAD(,pmap)	pmap_list = TAILQ_HEAD_INITIALIZER(pmap_list);
@@ -175,7 +175,6 @@ static vm_paddr_t dmaplimit;
 static int nkpt;
 vm_offset_t kernel_vm_end = VM_MIN_KERNEL_ADDRESS;
 
-#define PAT_INDEX_SIZE  8
 static pt_entry_t pat_pte_index[PAT_INDEX_SIZE];	/* PAT -> PG_ bits */
 /*static pt_entry_t pat_pde_index[PAT_INDEX_SIZE];*/	/* PAT -> PG_ bits */
 
@@ -216,19 +215,15 @@ uint64_t pmap_bits_default[] = {
 		X86_PG_V,					/* PG_V_IDX		1 */
 		X86_PG_RW,					/* PG_RW_IDX		2 */
 		X86_PG_U,					/* PG_U_IDX		3 */
-		X86_PG_NC_PWT | X86_PG_NC_PCD | X86_PG_PTE_PAT,	/*PG_PTE_CACHE_IDX	4 */
-		X86_PG_NC_PWT | X86_PG_NC_PCD | X86_PG_PDE_PAT,	/*PG_PDE_CACHE_IDX	5 */
-		X86_PG_A,					/* PG_A_IDX		6 */
-		X86_PG_M,					/* PG_M_IDX		7 */
-		X86_PG_PS,					/* PG_PS_IDX3		8 */
-		X86_PG_G,					/* PG_G_IDX		9 */
-		X86_PG_AVAIL1,					/* PG_AVAIL1_IDX	10 */
-		X86_PG_AVAIL2,					/* PG_AVAIL2_IDX	11 */
-		X86_PG_AVAIL3,					/* PG_AVAIL3_IDX	12 */
-		X86_PG_RW | X86_PG_U,				/* PG_PROT_IDX		13 */
-		X86_PG_NC_PWT | X86_PG_NC_PCD,			/* PG_N_IDX		14 */
+		X86_PG_A,					/* PG_A_IDX		4 */
+		X86_PG_M,					/* PG_M_IDX		5 */
+		X86_PG_PS,					/* PG_PS_IDX3		6 */
+		X86_PG_G,					/* PG_G_IDX		7 */
+		X86_PG_AVAIL1,					/* PG_AVAIL1_IDX	8 */
+		X86_PG_AVAIL2,					/* PG_AVAIL2_IDX	9 */
+		X86_PG_AVAIL3,					/* PG_AVAIL3_IDX	10 */
+		X86_PG_NC_PWT | X86_PG_NC_PCD,			/* PG_N_IDX	11 */
 };
-
 /*
  * Crashdump maps.
  */
@@ -284,6 +279,8 @@ static boolean_t pmap_testbit (vm_page_t m, int bit);
 
 static pt_entry_t * pmap_pte_quick (pmap_t pmap, vm_offset_t va);
 static vm_offset_t pmap_kmem_choose(vm_offset_t addr);
+
+static void pmap_pinit_defaults(struct pmap *pmap);
 
 static unsigned pdir4mb;
 
@@ -678,9 +675,9 @@ create_pagetables(vm_paddr_t *firstaddr)
 	for (i = 0; (i << PAGE_SHIFT) < *firstaddr; i++) {
 		((pt_entry_t *)KPTbase)[i] = i << PAGE_SHIFT;
 		((pt_entry_t *)KPTbase)[i] |=
-		    kernel_pmap.pmap_bits[PG_RW_IDX] |
-		    kernel_pmap.pmap_bits[PG_V_IDX] |
-		    kernel_pmap.pmap_bits[PG_G_IDX];
+		    pmap_bits_default[PG_RW_IDX] |
+		    pmap_bits_default[PG_V_IDX] |
+		    pmap_bits_default[PG_G_IDX];
 	}
 
 	/*
@@ -692,14 +689,14 @@ create_pagetables(vm_paddr_t *firstaddr)
 	for (i = 0; i < nkpt_base; i++) {
 		((pd_entry_t *)KPDbase)[i] = KPTbase + (i << PAGE_SHIFT);
 		((pd_entry_t *)KPDbase)[i] |=
-		    kernel_pmap.pmap_bits[PG_RW_IDX] |
-		    kernel_pmap.pmap_bits[PG_V_IDX];
+		    pmap_bits_default[PG_RW_IDX] |
+		    pmap_bits_default[PG_V_IDX];
 	}
 	for (i = 0; i < nkpt_phys; i++) {
 		((pd_entry_t *)KPDphys)[i] = KPTphys + (i << PAGE_SHIFT);
 		((pd_entry_t *)KPDphys)[i] |=
-		    kernel_pmap.pmap_bits[PG_RW_IDX] |
-		    kernel_pmap.pmap_bits[PG_V_IDX];
+		    pmap_bits_default[PG_RW_IDX] |
+		    pmap_bits_default[PG_V_IDX];
 	}
 
 	/*
@@ -710,10 +707,10 @@ create_pagetables(vm_paddr_t *firstaddr)
 	for (i = 0; (i << PDRSHIFT) < *firstaddr; i++) {
 		((pd_entry_t *)KPDbase)[i] = i << PDRSHIFT;
 		((pd_entry_t *)KPDbase)[i] |=
-		    kernel_pmap.pmap_bits[PG_RW_IDX] |
-		    kernel_pmap.pmap_bits[PG_V_IDX] |
-		    kernel_pmap.pmap_bits[PG_PS_IDX] |
-		    kernel_pmap.pmap_bits[PG_G_IDX];
+		    pmap_bits_default[PG_RW_IDX] |
+		    pmap_bits_default[PG_V_IDX] |
+		    pmap_bits_default[PG_PS_IDX] |
+		    pmap_bits_default[PG_G_IDX];
 	}
 
 	/*
@@ -724,9 +721,9 @@ create_pagetables(vm_paddr_t *firstaddr)
 		((pdp_entry_t *)KPDPphys)[NPDPEPG - NKPDPE + i] =
 				KPDphys + (i << PAGE_SHIFT);
 		((pdp_entry_t *)KPDPphys)[NPDPEPG - NKPDPE + i] |=
-		    kernel_pmap.pmap_bits[PG_RW_IDX] |
-		    kernel_pmap.pmap_bits[PG_V_IDX] |
-		    kernel_pmap.pmap_bits[PG_U_IDX];
+		    pmap_bits_default[PG_RW_IDX] |
+		    pmap_bits_default[PG_V_IDX] |
+		    pmap_bits_default[PG_U_IDX];
 	}
 
 	/*
@@ -740,12 +737,12 @@ create_pagetables(vm_paddr_t *firstaddr)
 		for (i = 0; i < NPDEPG * ndmpdp; i++) {
 			((pd_entry_t *)DMPDphys)[i] = i << PDRSHIFT;
 			((pd_entry_t *)DMPDphys)[i] |=
-			    kernel_pmap.pmap_bits[PG_RW_IDX] |
-			    kernel_pmap.pmap_bits[PG_V_IDX] |
-			    kernel_pmap.pmap_bits[PG_PS_IDX] |
-			    kernel_pmap.pmap_bits[PG_G_IDX] |
-			    kernel_pmap.pmap_bits[PG_M_IDX] |
-			    kernel_pmap.pmap_bits[PG_A_IDX];
+			    pmap_bits_default[PG_RW_IDX] |
+			    pmap_bits_default[PG_V_IDX] |
+			    pmap_bits_default[PG_PS_IDX] |
+			    pmap_bits_default[PG_G_IDX] |
+			    pmap_bits_default[PG_M_IDX] |
+			    pmap_bits_default[PG_A_IDX];
 		}
 
 		/*
@@ -755,30 +752,30 @@ create_pagetables(vm_paddr_t *firstaddr)
 			((pdp_entry_t *)DMPDPphys)[i] = DMPDphys +
 							(i << PAGE_SHIFT);
 			((pdp_entry_t *)DMPDPphys)[i] |=
-			    kernel_pmap.pmap_bits[PG_RW_IDX] |
-			    kernel_pmap.pmap_bits[PG_V_IDX] |
-			    kernel_pmap.pmap_bits[PG_U_IDX];
+			    pmap_bits_default[PG_RW_IDX] |
+			    pmap_bits_default[PG_V_IDX] |
+			    pmap_bits_default[PG_U_IDX];
 		}
 	} else {
 		for (i = 0; i < ndmpdp; i++) {
 			((pdp_entry_t *)DMPDPphys)[i] =
 						(vm_paddr_t)i << PDPSHIFT;
 			((pdp_entry_t *)DMPDPphys)[i] |=
-			    kernel_pmap.pmap_bits[PG_RW_IDX] |
-			    kernel_pmap.pmap_bits[PG_V_IDX] |
-			    kernel_pmap.pmap_bits[PG_PS_IDX] |
-			    kernel_pmap.pmap_bits[PG_G_IDX] |
-			    kernel_pmap.pmap_bits[PG_M_IDX] |
-			    kernel_pmap.pmap_bits[PG_A_IDX];
+			    pmap_bits_default[PG_RW_IDX] |
+			    pmap_bits_default[PG_V_IDX] |
+			    pmap_bits_default[PG_PS_IDX] |
+			    pmap_bits_default[PG_G_IDX] |
+			    pmap_bits_default[PG_M_IDX] |
+			    pmap_bits_default[PG_A_IDX];
 		}
 	}
 
 	/* And recursively map PML4 to itself in order to get PTmap */
 	((pdp_entry_t *)KPML4phys)[PML4PML4I] = KPML4phys;
 	((pdp_entry_t *)KPML4phys)[PML4PML4I] |=
-	    kernel_pmap.pmap_bits[PG_RW_IDX] |
-	    kernel_pmap.pmap_bits[PG_V_IDX] |
-	    kernel_pmap.pmap_bits[PG_U_IDX];
+	    pmap_bits_default[PG_RW_IDX] |
+	    pmap_bits_default[PG_V_IDX] |
+	    pmap_bits_default[PG_U_IDX];
 
 	/*
 	 * Connect the Direct Map slots up to the PML4
@@ -786,9 +783,9 @@ create_pagetables(vm_paddr_t *firstaddr)
 	for (j = 0; j < NDMPML4E; ++j) {
 		((pdp_entry_t *)KPML4phys)[DMPML4I + j] =
 		    (DMPDPphys + ((vm_paddr_t)j << PML4SHIFT)) |
-		    kernel_pmap.pmap_bits[PG_RW_IDX] |
-		    kernel_pmap.pmap_bits[PG_V_IDX] |
-		    kernel_pmap.pmap_bits[PG_U_IDX];
+		    pmap_bits_default[PG_RW_IDX] |
+		    pmap_bits_default[PG_V_IDX] |
+		    pmap_bits_default[PG_U_IDX];
 	}
 
 	/*
@@ -796,9 +793,9 @@ create_pagetables(vm_paddr_t *firstaddr)
 	 */
 	((pdp_entry_t *)KPML4phys)[KPML4I] = KPDPphys;
 	((pdp_entry_t *)KPML4phys)[KPML4I] |=
-	    kernel_pmap.pmap_bits[PG_RW_IDX] |
-	    kernel_pmap.pmap_bits[PG_V_IDX] |
-	    kernel_pmap.pmap_bits[PG_U_IDX];
+	    pmap_bits_default[PG_RW_IDX] |
+	    pmap_bits_default[PG_V_IDX] |
+	    pmap_bits_default[PG_U_IDX];
 }
 
 /*
@@ -823,10 +820,6 @@ pmap_bootstrap(vm_paddr_t *firstaddr)
 
 	avail_start = *firstaddr;
 
-	/* Initialize the PG_* control bits with the X86 defaults */
-	bcopy(&pmap_bits_default, &kernel_pmap.pmap_bits, sizeof(pmap_bits_default));
-
-
 	/*
 	 * Create an initial set of page tables to run the kernel in.
 	 */
@@ -848,7 +841,6 @@ pmap_bootstrap(vm_paddr_t *firstaddr)
 	 * Initialize protection array.
 	 */
 	i386_protection_init();
-	bcopy(protection_codes, kernel_pmap.protection_codes, sizeof(protection_codes));
 
 	/*
 	 * The kernel's pmap is statically allocated so we don't have to use
@@ -925,10 +917,10 @@ pmap_bootstrap(vm_paddr_t *firstaddr)
 //		pseflag = kernel_pmap.pmap_bits[PG_PS_IDX];
 		ptditmp = *(PTmap + x86_64_btop(KERNBASE));
 		ptditmp &= ~(NBPDR - 1);
-		ptditmp |= kernel_pmap.pmap_bits[PG_V_IDX] |
-		    kernel_pmap.pmap_bits[PG_RW_IDX] |
-		    kernel_pmap.pmap_bits[PG_PS_IDX] |
-		    kernel_pmap.pmap_bits[PG_U_IDX];
+		ptditmp |= pmap_bits_default[PG_V_IDX] |
+		    pmap_bits_default[PG_RW_IDX] |
+		    pmap_bits_default[PG_PS_IDX] |
+		    pmap_bits_default[PG_U_IDX];
 //		    pgeflag;
 		pdir4mb = ptditmp;
 	}
@@ -937,6 +929,8 @@ pmap_bootstrap(vm_paddr_t *firstaddr)
 
 	/* Initialize the PAT MSR */
 	pmap_init_pat();
+
+	pmap_pinit_defaults(&kernel_pmap);
 }
 
 /*
@@ -1313,12 +1307,14 @@ pmap_kmodify_rw(vm_offset_t va)
 	cpu_invlpg((void *)va);
 }
 
+/* NOT USED
 void
 pmap_kmodify_nc(vm_offset_t va)
 {
-	atomic_set_long(vtopte(va), kernel_pmap.pmap_bits[PG_N_IDX]);
+	atomic_set_long(vtopte(va), PG_N);
 	cpu_invlpg((void *)va);
 }
+*/
 
 /*
  * Used to map a range of physical addresses into kernel virtual
@@ -1425,7 +1421,7 @@ pmap_qenter(vm_offset_t va, vm_page_t *m, int count)
 		*pte = VM_PAGE_TO_PHYS(*m) |
 		    kernel_pmap.pmap_bits[PG_RW_IDX] |
 		    kernel_pmap.pmap_bits[PG_V_IDX] |
-		    pat_pte_index[(*m)->pat_mode];
+		    kernel_pmap.pmap_cache_bits[(*m)->pat_mode];
 //		pgeflag;
 		cpu_invlpg((void *)va);
 		va += PAGE_SIZE;
@@ -1480,6 +1476,13 @@ pmap_init_proc(struct proc *p)
 {
 }
 
+static void
+pmap_pinit_defaults(struct pmap *pmap) {
+	bcopy(pmap_bits_default, pmap->pmap_bits, sizeof(pmap_bits_default));
+	bcopy(protection_codes, pmap->protection_codes, sizeof(protection_codes));
+	bcopy(pat_pte_index, pmap->pmap_cache_bits, sizeof(pat_pte_index));
+	pmap->pmap_cache_mask = X86_PG_NC_PWT | X86_PG_NC_PCD | X86_PG_PTE_PAT;
+}
 /*
  * Initialize pmap0/vmspace0.  This pmap is not added to pmap_list because
  * it, and IdlePTD, represents the template used to update all other pmaps.
@@ -1499,8 +1502,7 @@ pmap_pinit0(struct pmap *pmap)
 	spin_init(&pmap->pm_spin);
 	lwkt_token_init(&pmap->pm_token, "pmap_tok");
 	bzero(&pmap->pm_stats, sizeof pmap->pm_stats);
-	bcopy(pmap_bits_default, pmap->pmap_bits, sizeof(pmap_bits_default));
-	bcopy(protection_codes, pmap->protection_codes, sizeof(protection_codes));
+	pmap_pinit_defaults(pmap);
 }
 
 /*
@@ -1518,8 +1520,7 @@ pmap_pinit_simple(struct pmap *pmap)
 	pmap->pm_pvhint = NULL;
 	pmap->pm_flags = PMAP_FLAG_SIMPLE;
 
-	bcopy(pmap_bits_default, pmap->pmap_bits, sizeof(pmap_bits_default));
-	bcopy(protection_codes, pmap->protection_codes, sizeof(protection_codes));
+	pmap_pinit_defaults(pmap);
 
 	/*
 	 * Don't blow up locks/tokens on re-use (XXX fix/use drop code
@@ -3804,7 +3805,7 @@ pmap_enter(pmap_t pmap, vm_offset_t va, vm_page_t m, vm_prot_t prot,
 		newpte |= pmap->pmap_bits[PG_MANAGED_IDX];
 //	if (pmap == &kernel_pmap)
 //		newpte |= pgeflag;
-	newpte |= pat_pte_index[m->pat_mode];
+	newpte |= pmap->pmap_cache_bits[m->pat_mode];
 	if (m->flags & PG_FICTITIOUS)
 		newpte |= pmap->pmap_bits[PG_DEVICE_IDX];
 
@@ -4600,7 +4601,7 @@ i386_protection_init(void)
 
 	/* JG NX support may go here; No VM_PROT_EXECUTE ==> set NX bit  */
 	kp = protection_codes;
-	for (prot = 0; prot < 8; prot++) {
+	for (prot = 0; prot < PROTECTION_CODES_SIZE; prot++) {
 		switch (prot) {
 		case VM_PROT_NONE | VM_PROT_NONE | VM_PROT_NONE:
 			/*
@@ -4680,7 +4681,7 @@ pmap_mapdev_attr(vm_paddr_t pa, vm_size_t size, int mode)
 		*pte = pa |
 		    kernel_pmap.pmap_bits[PG_RW_IDX] |
 		    kernel_pmap.pmap_bits[PG_V_IDX] | /* pgeflag | */
-		    pat_pte_index[mode];
+		    kernel_pmap.pmap_cache_bits[mode];
 		tmpsize -= PAGE_SIZE;
 		tmpva += PAGE_SIZE;
 		pa += PAGE_SIZE;
@@ -4740,8 +4741,8 @@ pmap_change_attr(vm_offset_t va, vm_size_t count, int mode)
 
 	while (count) {
 		pte = vtopte(va);
-		*pte = (*pte & ~(pt_entry_t)(kernel_pmap.pmap_bits[PG_PTE_CACHE_IDX])) |
-		       pat_pte_index[mode];
+		*pte = (*pte & ~(pt_entry_t)(kernel_pmap.pmap_cache_mask)) |
+		       kernel_pmap.pmap_cache_bits[mode];
 		--count;
 		va += PAGE_SIZE;
 	}
