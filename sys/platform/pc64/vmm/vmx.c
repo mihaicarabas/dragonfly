@@ -17,7 +17,9 @@
 #include <machine/smp.h>
 #include <machine/globaldata.h>
 #include <machine/trap.h>
+#include <machine/pmap.h>
 
+#include <vm/vm_map.h>
 
 #include "vmm.h"
 #include "vmm_utils.h"
@@ -90,6 +92,13 @@ uint64_t cr4_fixed_to_1;
 /* VMX status */
 static uint8_t vmx_enabled = 0;
 static uint8_t vmx_initialized = 0;
+
+static uint64_t pmap_bits_ept[PG_BITS_SIZE];
+static pt_entry_t pmap_cache_bits_ept[PAT_INDEX_SIZE];
+static int ept_protection_codes[PROTECTION_CODES_SIZE];
+static pt_entry_t pmap_cache_mask_ept;
+
+static int pmap_pm_flags_ept;
 
 /* VMX set control setting
  * Intel System Programming Guide, Part 3, Order Number 326019
@@ -262,6 +271,100 @@ build_vmx_sysctl(void)
 }
 
 static int
+vmx_ept_init(void){
+	int prot;
+	/* Chapter 28 VMX SUPPORT FOR ADDRESS TRANSLATION
+	 * Intel Manual 3c, page 107
+	 */
+
+	if(!EPT_PWL4(vmx_ept_vpid_cap)) {
+		return EINVAL;
+	}
+
+	pmap_bits_ept[TYPE_IDX] = EPT_PMAP;
+	pmap_bits_ept[PG_V_IDX] = EPT_PG_READ | EPT_PG_EXECUTE;
+	pmap_bits_ept[PG_RW_IDX] = EPT_PG_READ | EPT_PG_EXECUTE | EPT_PG_WRITE;
+	pmap_bits_ept[PG_PS_IDX] = EPT_PG_PS;
+	pmap_bits_ept[PG_G_IDX] = 0;
+	pmap_bits_ept[PG_W_IDX] = EPT_PG_AVAIL1;
+	pmap_bits_ept[PG_MANAGED_IDX] = EPT_PG_AVAIL2;
+	pmap_bits_ept[PG_DEVICE_IDX] = EPT_PG_AVAIL3;
+	pmap_bits_ept[PG_N_IDX] = EPT_IGNORE_PAT | EPT_MEM_TYPE_UC;
+
+	if (EPT_AD_BITS_SUPPORTED(vmx_ept_vpid_cap)) {
+		pmap_bits_ept[PG_A_IDX] = 1ULL << 8;
+		pmap_bits_ept[PG_M_IDX] = 1ULL << 8;
+	} else {
+		pmap_bits_ept[PG_A_IDX] = 0;
+		pmap_bits_ept[PG_M_IDX] = 0;
+		pmap_pm_flags_ept = PMAP_EMULATE_AD_BITS;
+	}
+
+	pmap_cache_mask_ept = EPT_IGNORE_PAT | EPT_MEM_TYPE_MASK;
+
+	pmap_cache_bits_ept[PAT_UNCACHEABLE] = EPT_IGNORE_PAT | EPT_MEM_TYPE_UC;
+	pmap_cache_bits_ept[PAT_WRITE_COMBINING] = EPT_IGNORE_PAT | EPT_MEM_TYPE_WC;
+	pmap_cache_bits_ept[PAT_WRITE_THROUGH] = EPT_IGNORE_PAT | EPT_MEM_TYPE_WT;
+	pmap_cache_bits_ept[PAT_WRITE_PROTECTED] = EPT_IGNORE_PAT | EPT_MEM_TYPE_WP;
+	pmap_cache_bits_ept[PAT_WRITE_BACK] = EPT_IGNORE_PAT | EPT_MEM_TYPE_WB;
+	pmap_cache_bits_ept[PAT_UNCACHED] = EPT_IGNORE_PAT | EPT_MEM_TYPE_UC;
+
+	for (prot = 0; prot < PROTECTION_CODES_SIZE; prot++) {
+		switch (prot) {
+		case VM_PROT_NONE | VM_PROT_NONE | VM_PROT_NONE:
+		case VM_PROT_READ | VM_PROT_NONE | VM_PROT_NONE:
+		case VM_PROT_READ | VM_PROT_NONE | VM_PROT_EXECUTE:
+		case VM_PROT_NONE | VM_PROT_NONE | VM_PROT_EXECUTE:
+			ept_protection_codes[prot] = 0;
+			break;
+		case VM_PROT_NONE | VM_PROT_WRITE | VM_PROT_NONE:
+		case VM_PROT_NONE | VM_PROT_WRITE | VM_PROT_EXECUTE:
+		case VM_PROT_READ | VM_PROT_WRITE | VM_PROT_NONE:
+		case VM_PROT_READ | VM_PROT_WRITE | VM_PROT_EXECUTE:
+			ept_protection_codes[prot] = pmap_bits_ept[PG_RW_IDX];
+
+			break;
+		}
+	}
+
+	return 0;
+}
+
+static void
+regular2ept_pmap(void)
+{
+	struct vmx_thread_info * vti = (struct vmx_thread_info *) curthread->td_vmm;
+	pmap_t pmap = &curthread->td_lwp->lwp_vmspace->vm_pmap;
+
+	pmap->pm_flags |= pmap_pm_flags_ept;
+
+	bcopy(pmap->pmap_bits, vti->pmap_bits, sizeof(pmap->pmap_bits));
+	bcopy(pmap->protection_codes, vti->protection_codes, sizeof(pmap->protection_codes));
+	bcopy(pmap->pmap_cache_bits, vti->pmap_cache_bits, sizeof(pmap->pmap_cache_bits));
+	vti->pmap_cache_mask = pmap->pmap_cache_mask;
+
+	bcopy(pmap_bits_ept, pmap->pmap_bits, sizeof(pmap_bits_ept));
+	bcopy(ept_protection_codes, pmap->protection_codes, sizeof(ept_protection_codes));
+	bcopy(pmap_cache_bits_ept, pmap->pmap_cache_bits, sizeof(pmap_cache_bits_ept));
+	pmap->pmap_cache_mask = pmap_cache_mask_ept;
+}
+
+static void
+ept2regular_pmap(void)
+{
+	struct vmx_thread_info * vti = (struct vmx_thread_info *) curthread->td_vmm;
+	pmap_t pmap = &curthread->td_lwp->lwp_vmspace->vm_pmap;
+
+	pmap->pm_flags &= ~pmap_pm_flags_ept;
+
+	bcopy(vti->pmap_bits, pmap->pmap_bits, sizeof(pmap->pmap_bits));
+	bcopy(vti->protection_codes, pmap->protection_codes, sizeof(pmap->protection_codes));
+	bcopy(vti->pmap_cache_bits, pmap->pmap_cache_bits, sizeof(pmap->pmap_cache_bits));
+	pmap->pmap_cache_mask = vti->pmap_cache_mask;
+}
+
+
+static int
 vmx_init(void)
 {
 	uint64_t feature_control;
@@ -362,15 +465,21 @@ vmx_init(void)
 		return (ENODEV);
 	}
 	
+	/* Enable EPT feature */
+	err = vmx_set_ctl_setting(&vmx_procbased2,
+	    PROCBASED2_ENABLE_EPT,
+	    ONE);
+	if (err) {
+		kprintf("VMM: PROCBASED2_ENABLE_EPT not supported by this CPU\n");
+		return (ENODEV);
+	}
+
 	vmx_ept_vpid_cap = rdmsr(IA32_VMX_EPT_VPID_CAP);
-//	/* Enable EPT feature */
-//	err = vmx_set_ctl_setting(&vmx_procbased2,
-//	    PROCBASED2_ENABLE_EPT,
-//	    ONE);
-//	if (err) {
-//		kprintf("VMM: PROCBASED2_ENABLE_EPT not supported by this CPU\n");
-//		return (ENODEV);
-//	}
+	if (vmx_ept_init()) {
+		kprintf("VMM: vmx_ept_init failes\n");
+		return (ENODEV);
+	}
+
 //
 //	/* Enable VPID feature */
 //	err = vmx_set_ctl_setting(&vmx_procbased2,
@@ -1105,6 +1214,8 @@ vmx_vmrun(void)
 	uint64_t val;
 	struct trapframe *tmp;
 
+	regular2ept_pmap();
+
 restart:
 	gd = mycpu;
 	vti = (struct vmx_thread_info *) curthread->td_vmm;
@@ -1195,6 +1306,7 @@ restart:
 		goto error;
 	}
 done:
+	ept2regular_pmap();
 	kprintf("VMM: vmx_vmrun: returning with success\n");
 	return 0;
 
@@ -1202,6 +1314,7 @@ error:
 	cpu_enable_intr();
 	crit_exit();
 error2:
+	ept2regular_pmap();
 	kprintf("VMM: vmx_vmrun failed\n");
 	return err;
 }
