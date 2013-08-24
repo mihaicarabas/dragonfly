@@ -63,11 +63,6 @@ struct vmx_ctl_info vmx_entry = {
 	.msr_true_addr = IA32_VMX_TRUE_ENTRY_CTLS,
 };
 
-struct vmx_ctl_info vmx_ept_vpid_cap = {
-	.msr_addr = IA32_VMX_EPT_VPID_CAP,
-	.msr_true_addr = IA32_VMX_EPT_VPID_CAP,
-};
-
 /* Declared in generic vmm.c - SYSCTL parent */
 extern struct sysctl_oid *vmm_sysctl_tree;
 
@@ -82,6 +77,9 @@ struct vmx_pcpu_info *pcpu_info;
 uint32_t vmx_revision;
 uint32_t vmx_region_size;
 uint8_t vmx_width_addr;
+
+/* IA32_VMX_EPT_VPID_CAP */
+uint64_t vmx_ept_vpid_cap;
 
 /* VMX fixed bits */
 uint64_t cr0_fixed_to_0;
@@ -256,6 +254,11 @@ build_vmx_sysctl(void)
 	    OID_AUTO, "vmentry_ctls", CTLFLAG_RD,
 	    &vmx_entry.ctls, 0,
 	    "VMX width address");
+	SYSCTL_ADD_INT(&vmx_sysctl_ctx,
+	    SYSCTL_CHILDREN(vmx_sysctl_tree),
+	    OID_AUTO, "ept_vpid_cap", CTLFLAG_RD,
+	    &vmx_ept_vpid_cap, 0,
+	    "VMX EPT VPID CAP");
 }
 
 static int
@@ -358,7 +361,8 @@ vmx_init(void)
 		kprintf("VMM: VMEXIT_LOAD_IA32_EFER not supported by this CPU\n");
 		return (ENODEV);
 	}
-
+	
+	vmx_ept_vpid_cap = rdmsr(IA32_VMX_EPT_VPID_CAP);
 //	/* Enable EPT feature */
 //	err = vmx_set_ctl_setting(&vmx_procbased2,
 //	    PROCBASED2_ENABLE_EPT,
