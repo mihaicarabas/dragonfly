@@ -250,6 +250,28 @@ struct pv_entry_rb_tree;
 RB_PROTOTYPE2(pv_entry_rb_tree, pv_entry, pv_entry,
 	      pv_entry_compare, vm_pindex_t);
 
+/* Types of PMAP (regular, EPT Intel, NPT Amd) */
+#define	REGULAR_PMAP		0
+#define	EPT_PMAP		1
+
+/* Bits indexes in pmap_bits */
+#define	TYPE_IDX		0
+#define	PG_V_IDX		1
+#define	PG_RW_IDX		2
+#define	PG_U_IDX		3
+#define	PG_PTE_CACHE_IDX	4
+#define	PG_PDE_CACHE_IDX	5
+#define	PG_A_IDX		6
+#define	PG_M_IDX		7
+#define	PG_PS_IDX		8
+#define	PG_G_IDX		9
+#define	PG_W_IDX		10
+#define	PG_MANAGED_IDX		11
+#define	PG_DEVICE_IDX		12
+#define	PG_PROT_IDX		13
+#define	PG_N_IDX		14
+#define	PG_BITS_SIZE		15
+
 struct pmap {
 	pml4_entry_t		*pm_pml4;	/* KVA of level 4 page table */
 	struct pv_entry		*pm_pmlpv;	/* PV entry for pml4 */
@@ -263,12 +285,15 @@ struct pmap {
 	int			pm_generation;	/* detect pvlist deletions */
 	struct spinlock		pm_spin;
 	struct lwkt_token	pm_token;
+	uint64_t		pmap_bits[PG_BITS_SIZE];
+	int			protection_codes[8];
 };
 
 #define CPUMASK_LOCK		CPUMASK(SMP_MAXCPU)
 #define CPUMASK_BIT		SMP_MAXCPU	/* for 1LLU << SMP_MAXCPU */
 
 #define PMAP_FLAG_SIMPLE	0x00000001
+#define PMAP_EMULATE_AD_BITS	0x00000002
 
 #define pmap_resident_count(pmap) (pmap)->pm_stats.resident_count
 
