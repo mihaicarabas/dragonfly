@@ -48,16 +48,14 @@ struct vmx_thread_info {
 	register_t	host_r14;
 	register_t	host_r15;
 	register_t	host_rsp;
-	uint64_t vmexit_reason;
-	uint64_t vmexit_qualification;
-	uint64_t vmexit_interruption_info;
-	uint64_t vmexit_interruption_error;
-	uint64_t vmexit_instruction_length;
+	uint64_t	vmexit_reason;
+	uint64_t	vmexit_qualification;
+	uint64_t	vmexit_interruption_info;
+	uint64_t	vmexit_interruption_error;
+	uint64_t	vmexit_instruction_length;
+	uint64_t	guest_physical_address;
 
-	uint64_t		pmap_bits[PG_BITS_SIZE];
-	int			protection_codes[PROTECTION_CODES_SIZE];
-	pt_entry_t		pmap_cache_bits[PAT_INDEX_SIZE];
-	pt_entry_t		pmap_cache_mask;
+	uint64_t	guest_cr3;
 };
 
 typedef enum {
@@ -286,34 +284,50 @@ void vmx_vmexit(void);
 #define		VMCS_G			(1 << 15)	/* Granularity */
 #define		VMCS_SEG_UNUSABLE	(1 << 16)	/* Segment unusable (0 = usable; 1 = unusable) */
 
-#define VMCS_EXCEPTION_TYPE(x)			((x >> 8) & 0x7)
-#define VMCS_EXCEPTION_EXTERNAL_INTERRUPT	0
-#define VMCS_EXCEPTION_NMI			2
-#define VMCS_EXCEPTION_HARDWARE			3
-#define VMCS_EXCEPTION_SOFTWARE			6
+#define	VMCS_EXCEPTION_TYPE(x)			((x >> 8) & 0x7)
+#define	VMCS_EXCEPTION_EXTERNAL_INTERRUPT	0
+#define	VMCS_EXCEPTION_NMI			2
+#define	VMCS_EXCEPTION_HARDWARE			3
+#define	VMCS_EXCEPTION_SOFTWARE			6
 
-#define VMCS_EXCEPTION_NUMBER(x)		(x & 0xFF)
+#define	VMCS_EXCEPTION_NUMBER(x)		(x & 0xFF)
 
 /* EPT defines */
 #define	EPT_PWL4(cap)			((cap) & (1ULL << 6))
+#define	EPT_MEMORY_TYPE_WB(cap)		((cap) & (1UL << 14))
 #define	EPT_AD_BITS_SUPPORTED(cap)	((cap) & (1ULL << 21))
-#define EPT_PG_READ			(0x1ULL << 0)
-#define EPT_PG_WRITE			(0x1ULL << 1)
-#define EPT_PG_EXECUTE			(0x1ULL << 2)
-#define EPT_IGNORE_PAT			(0x1ULL << 6)
-#define EPT_PG_PS			(0x1ULL << 7)
-#define EPT_PG_A			(0x1ULL << 8)
-#define EPT_PG_M			(0x1ULL << 9)
-#define EPT_PG_AVAIL1			(0x1ULL << 10)
-#define EPT_PG_AVAIL2			(0x1ULL << 11)
-#define EPT_PG_AVAIL3			(0x1ULL << 52)
+#define	EPT_PG_READ			(0x1ULL << 0)
+#define	EPT_PG_WRITE			(0x1ULL << 1)
+#define	EPT_PG_EXECUTE			(0x1ULL << 2)
+#define	EPT_IGNORE_PAT			(0x1ULL << 6)
+#define	EPT_PG_PS			(0x1ULL << 7)
+#define	EPT_PG_A			(0x1ULL << 8)
+#define	EPT_PG_M			(0x1ULL << 9)
+#define	EPT_PG_AVAIL1			(0x1ULL << 10)
+#define	EPT_PG_AVAIL2			(0x1ULL << 11)
+#define	EPT_PG_AVAIL3			(0x1ULL << 52)
+#define	EPT_PWLEVELS			(4)	/* page walk levels */
 
-#define EPT_MEM_TYPE_SHIFT		(0x3)
-#define EPT_MEM_TYPE_UC			(0x0ULL << EPT_MEM_TYPE_SHIFT)
-#define EPT_MEM_TYPE_WC			(0x1ULL << EPT_MEM_TYPE_SHIFT)
-#define EPT_MEM_TYPE_WT			(0x4ULL << EPT_MEM_TYPE_SHIFT)
-#define EPT_MEM_TYPE_WP			(0x5ULL << EPT_MEM_TYPE_SHIFT)
-#define EPT_MEM_TYPE_WB			(0x6ULL << EPT_MEM_TYPE_SHIFT)
-#define EPT_MEM_TYPE_MASK		(0x7ULL << EPT_MEM_TYPE_SHIFT)
+#define	EPTP_CACHE(x)			(x)
+#define	EPTP_PWLEN(x)			((x) << 3)
+#define	EPTP_AD_ENABLE			(0x1ULL << 6)
+
+#define	EPT_MEM_TYPE_SHIFT		(0x3)
+#define	EPT_MEM_TYPE_UC			(0x0ULL << EPT_MEM_TYPE_SHIFT)
+#define	EPT_MEM_TYPE_WC			(0x1ULL << EPT_MEM_TYPE_SHIFT)
+#define	EPT_MEM_TYPE_WT			(0x4ULL << EPT_MEM_TYPE_SHIFT)
+#define	EPT_MEM_TYPE_WP			(0x5ULL << EPT_MEM_TYPE_SHIFT)
+#define	EPT_MEM_TYPE_WB			(0x6ULL << EPT_MEM_TYPE_SHIFT)
+#define	EPT_MEM_TYPE_MASK		(0x7ULL << EPT_MEM_TYPE_SHIFT)
+
+#define	EPT_VIOLATION_READ		(1ULL << 0)
+#define	EPT_VIOLATION_WRITE		(1ULL << 1)
+#define	EPT_VIOLATION_INST_FETCH	(1ULL << 2)
+#define	EPT_VIOLATION_GPA_READABLE	(1ULL << 3)
+#define	EPT_VIOLATION_GPA_WRITEABLE	(1ULL << 4)
+#define	EPT_VIOLATION_GPA_EXECUTABLE	(1ULL << 5)
+
+
+
 
 #endif
