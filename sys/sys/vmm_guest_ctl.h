@@ -16,6 +16,7 @@
 struct guest_options {
 	register_t ip;
 	register_t sp;
+	register_t cr3;
 };
 
 
