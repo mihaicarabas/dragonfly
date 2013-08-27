@@ -20,6 +20,8 @@
 #include <machine/pmap.h>
 
 #include <vm/vm_map.h>
+#include <vm/vm_extern.h>
+#include <vm/vm_param.h>
 
 #include "vmm.h"
 #include "vmm_utils.h"
@@ -99,6 +101,7 @@ static int ept_protection_codes[PROTECTION_CODES_SIZE];
 static pt_entry_t pmap_cache_mask_ept;
 
 static int pmap_pm_flags_ept;
+static int eptp_bits;
 
 /* VMX set control setting
  * Intel System Programming Guide, Part 3, Order Number 326019
@@ -271,34 +274,65 @@ build_vmx_sysctl(void)
 }
 
 static int
+vmx_ept_fault_type(uint64_t qualification){
+	if (qualification & EPT_VIOLATION_WRITE)
+		return VM_PROT_WRITE;
+	else if (qualification & EPT_VIOLATION_INST_FETCH)
+		return VM_PROT_EXECUTE;
+	else
+		return VM_PROT_READ;
+}
+
+static int
+vmx_ept_gpa_prot(uint64_t qualification){
+	int prot = 0;
+
+	if (qualification & EPT_VIOLATION_GPA_READABLE)
+		prot |= VM_PROT_READ;
+
+	if (qualification & EPT_VIOLATION_GPA_WRITEABLE)
+		prot |= VM_PROT_WRITE;
+
+	if (qualification & EPT_VIOLATION_GPA_EXECUTABLE)
+		prot |= VM_PROT_EXECUTE;
+
+	return prot;
+}
+
+static int
 vmx_ept_init(void){
 	int prot;
 	/* Chapter 28 VMX SUPPORT FOR ADDRESS TRANSLATION
 	 * Intel Manual 3c, page 107
 	 */
 
-	if(!EPT_PWL4(vmx_ept_vpid_cap)) {
+	if(!EPT_PWL4(vmx_ept_vpid_cap)||
+	    !EPT_MEMORY_TYPE_WB(vmx_ept_vpid_cap)) {
 		return EINVAL;
+	}
+
+	eptp_bits |= EPTP_CACHE(PAT_WRITE_BACK) |
+	    EPTP_PWLEN(EPT_PWLEVELS - 1);
+
+	if (EPT_AD_BITS_SUPPORTED(vmx_ept_vpid_cap)) {
+		eptp_bits |= EPTP_AD_ENABLE;
+	} else {
+		pmap_pm_flags_ept = PMAP_EMULATE_AD_BITS;
 	}
 
 	pmap_bits_ept[TYPE_IDX] = EPT_PMAP;
 	pmap_bits_ept[PG_V_IDX] = EPT_PG_READ | EPT_PG_EXECUTE;
-	pmap_bits_ept[PG_RW_IDX] = EPT_PG_READ | EPT_PG_EXECUTE | EPT_PG_WRITE;
+	pmap_bits_ept[PG_RW_IDX] = EPT_PG_WRITE;
 	pmap_bits_ept[PG_PS_IDX] = EPT_PG_PS;
 	pmap_bits_ept[PG_G_IDX] = 0;
+	pmap_bits_ept[PG_U_IDX] = 0;
+	pmap_bits_ept[PG_A_IDX] = EPT_PG_A;
+	pmap_bits_ept[PG_M_IDX] = EPT_PG_M;
 	pmap_bits_ept[PG_W_IDX] = EPT_PG_AVAIL1;
 	pmap_bits_ept[PG_MANAGED_IDX] = EPT_PG_AVAIL2;
 	pmap_bits_ept[PG_DEVICE_IDX] = EPT_PG_AVAIL3;
 	pmap_bits_ept[PG_N_IDX] = EPT_IGNORE_PAT | EPT_MEM_TYPE_UC;
 
-	if (EPT_AD_BITS_SUPPORTED(vmx_ept_vpid_cap)) {
-		pmap_bits_ept[PG_A_IDX] = 1ULL << 8;
-		pmap_bits_ept[PG_M_IDX] = 1ULL << 8;
-	} else {
-		pmap_bits_ept[PG_A_IDX] = 0;
-		pmap_bits_ept[PG_M_IDX] = 0;
-		pmap_pm_flags_ept = PMAP_EMULATE_AD_BITS;
-	}
 
 	pmap_cache_mask_ept = EPT_IGNORE_PAT | EPT_MEM_TYPE_MASK;
 
@@ -331,38 +365,15 @@ vmx_ept_init(void){
 }
 
 static void
-regular2ept_pmap(void)
+pmap_regular2ept(pmap_t pmap, struct vmx_thread_info * vti)
 {
-	struct vmx_thread_info * vti = (struct vmx_thread_info *) curthread->td_vmm;
-	pmap_t pmap = &curthread->td_lwp->lwp_vmspace->vm_pmap;
-
 	pmap->pm_flags |= pmap_pm_flags_ept;
-
-	bcopy(pmap->pmap_bits, vti->pmap_bits, sizeof(pmap->pmap_bits));
-	bcopy(pmap->protection_codes, vti->protection_codes, sizeof(pmap->protection_codes));
-	bcopy(pmap->pmap_cache_bits, vti->pmap_cache_bits, sizeof(pmap->pmap_cache_bits));
-	vti->pmap_cache_mask = pmap->pmap_cache_mask;
 
 	bcopy(pmap_bits_ept, pmap->pmap_bits, sizeof(pmap_bits_ept));
 	bcopy(ept_protection_codes, pmap->protection_codes, sizeof(ept_protection_codes));
 	bcopy(pmap_cache_bits_ept, pmap->pmap_cache_bits, sizeof(pmap_cache_bits_ept));
 	pmap->pmap_cache_mask = pmap_cache_mask_ept;
 }
-
-static void
-ept2regular_pmap(void)
-{
-	struct vmx_thread_info * vti = (struct vmx_thread_info *) curthread->td_vmm;
-	pmap_t pmap = &curthread->td_lwp->lwp_vmspace->vm_pmap;
-
-	pmap->pm_flags &= ~pmap_pm_flags_ept;
-
-	bcopy(vti->pmap_bits, pmap->pmap_bits, sizeof(pmap->pmap_bits));
-	bcopy(vti->protection_codes, pmap->protection_codes, sizeof(pmap->protection_codes));
-	bcopy(vti->pmap_cache_bits, pmap->pmap_cache_bits, sizeof(pmap->pmap_cache_bits));
-	pmap->pmap_cache_mask = vti->pmap_cache_mask;
-}
-
 
 static int
 vmx_init(void)
@@ -476,10 +487,9 @@ vmx_init(void)
 
 	vmx_ept_vpid_cap = rdmsr(IA32_VMX_EPT_VPID_CAP);
 	if (vmx_ept_init()) {
-		kprintf("VMM: vmx_ept_init failes\n");
+		kprintf("VMM: vmx_ept_init failed\n");
 		return (ENODEV);
 	}
-
 //
 //	/* Enable VPID feature */
 //	err = vmx_set_ctl_setting(&vmx_procbased2,
@@ -762,6 +772,8 @@ vmx_vminit(struct guest_options *options)
 	vti->vmcs_region = (unsigned char*) VMXON_REGION_ALIGN(vti->vmcs_region_na);
 	vti->last_cpu = -1;
 
+	vti->guest_cr3 = options->cr3;
+
 	/* In the first 31 bits put the vmx revision*/
 	*((uint32_t *)vti->vmcs_region) = vmx_revision;
 
@@ -1023,7 +1035,7 @@ vmx_vmexit_loadinfo(void)
 	ERROR_IF(vmread(VMCS_VMEXIT_INTERRUPTION_INFO, &vti->vmexit_interruption_info));
 	ERROR_IF(vmread(VMCS_VMEXIT_INTERRUPTION_ERROR, &vti->vmexit_interruption_error));
 	ERROR_IF(vmread(VMCS_VMEXIT_INSTRUCTION_LENGTH, &vti->vmexit_instruction_length));
-
+	ERROR_IF(vmread(VMCS_GUEST_PHYSICAL_ADDRESS, &vti->guest_physical_address));
 	ERROR_IF(vmread(VMCS_GUEST_RIP, &vti->guest.tf_rip));
 	ERROR_IF(vmread(VMCS_GUEST_CS_SELECTOR, &vti->guest.tf_cs));
 	ERROR_IF(vmread(VMCS_GUEST_RFLAGS, &vti->guest.tf_rflags));
@@ -1081,12 +1093,11 @@ vmx_handle_vmexit(void)
 	struct trapframe *tf_old;
 	int err;
 	int func, regs[4];
+	int fault_type, gpa_prot, rv;
 	struct lwp *lp = curthread->td_lwp;
 	dkprintf("VMM: handle_vmx_vmexit\n");
-
 	vti = (struct vmx_thread_info *) curthread->td_vmm;
 	ERROR_IF(vti == NULL);
-
 
 	exit_reason = VMCS_BASIC_EXIT_REASON(vti->vmexit_reason);
 
@@ -1194,6 +1205,25 @@ vmx_handle_vmexit(void)
 			vti->guest.tf_rip += vti->vmexit_instruction_length;
 
 			break;
+		case EXIT_REASON_EPT_FAULT:
+			fault_type = vmx_ept_fault_type(vti->vmexit_qualification);
+
+			kprintf("VMM: handle_vmx_vmexit: EXIT_REASON_EPT_FAULT with qualification %lld,"
+			    "GPA: %llx, fault_Type: %d\n",(long long) vti->vmexit_qualification, (unsigned long long) vti->guest_physical_address, fault_type);
+
+			fault_type = vmx_ept_fault_type(vti->vmexit_qualification);
+			gpa_prot = vmx_ept_gpa_prot(vti->vmexit_qualification);
+
+			rv = vm_fault(&curthread->td_lwp->lwp_vmspace->vm_map, vti->guest_physical_address, fault_type, VM_FAULT_NORMAL);
+			if (rv != KERN_SUCCESS) {
+
+				kprintf("VMM: handle_vmx_vmexit: EXIT_REASON_EPT_FAULT couldn't resolve %llx\n",
+				    (unsigned long long) vti->guest_physical_address);
+
+				err = -1;
+				goto error;
+			}
+			break;
 		default:
 			kprintf("VMM: handle_vmx_vmexit: unknown exit reason: %d with qualification %lld\n",
 			    exit_reason, (long long) vti->vmexit_qualification);
@@ -1213,9 +1243,22 @@ vmx_vmrun(void)
 	int ret;
 	uint64_t val;
 	struct trapframe *tmp;
+	struct vmspace *oldvmspace;
+	struct vmspace *newvmspace;
 
-	regular2ept_pmap();
+	vti = (struct vmx_thread_info *) curthread->td_vmm;
+	ERROR2_IF(vti == NULL);
 
+	oldvmspace = curthread->td_lwp->lwp_vmspace;
+	newvmspace = vmspace_fork(oldvmspace);
+	pmap_regular2ept(&newvmspace->vm_pmap, vti);
+	lwkt_gettoken(&oldvmspace->vm_map.token);
+	lwkt_gettoken(&newvmspace->vm_map.token);
+	pmap_pinit2(vmspace_pmap(newvmspace));
+	pmap_replacevm(curthread->td_proc, newvmspace, 0);
+	lwkt_reltoken(&newvmspace->vm_map.token);
+	lwkt_reltoken(&oldvmspace->vm_map.token);
+	vmspace_free(oldvmspace);
 restart:
 	gd = mycpu;
 	vti = (struct vmx_thread_info *) curthread->td_vmm;
@@ -1255,7 +1298,9 @@ restart:
 	ERROR_IF(vmwrite(VMCS_GUEST_RFLAGS, vti->guest.tf_rflags));
 	ERROR_IF(vmwrite(VMCS_GUEST_RSP, vti->guest.tf_rsp));
 	ERROR_IF(vmwrite(VMCS_GUEST_SS_SELECTOR, vti->guest.tf_ss));
-	ERROR_IF(vmwrite(VMCS_GUEST_CR3, (uint64_t) curthread->td_pcb->pcb_cr3));
+//	ERROR_IF(vmwrite(VMCS_GUEST_CR3, (uint64_t) curthread->td_pcb->pcb_cr3));
+	ERROR_IF(vmwrite(VMCS_GUEST_CR3, (uint64_t) vti->guest_cr3));
+	ERROR_IF(vmwrite(VMCS_EPTP, (uint64_t) (curthread->td_pcb->pcb_cr3 | eptp_bits)));
 
 	/*
 	 * The kernel caches the MSR_FSBASE value in mdcpu->gd_user_fs.
@@ -1306,7 +1351,17 @@ restart:
 		goto error;
 	}
 done:
-	ept2regular_pmap();
+	oldvmspace = curthread->td_lwp->lwp_vmspace;
+	newvmspace = vmspace_fork(oldvmspace);
+
+	lwkt_gettoken(&oldvmspace->vm_map.token);
+	lwkt_gettoken(&newvmspace->vm_map.token);
+	pmap_pinit2(vmspace_pmap(newvmspace));
+	pmap_replacevm(curthread->td_proc, newvmspace, 0);
+	lwkt_reltoken(&newvmspace->vm_map.token);
+	lwkt_reltoken(&oldvmspace->vm_map.token);
+	vmspace_free(oldvmspace);
+
 	kprintf("VMM: vmx_vmrun: returning with success\n");
 	return 0;
 
@@ -1314,7 +1369,17 @@ error:
 	cpu_enable_intr();
 	crit_exit();
 error2:
-	ept2regular_pmap();
+	oldvmspace = curthread->td_lwp->lwp_vmspace;
+	newvmspace = vmspace_fork(oldvmspace);
+
+	lwkt_gettoken(&oldvmspace->vm_map.token);
+	lwkt_gettoken(&newvmspace->vm_map.token);
+	pmap_pinit2(vmspace_pmap(newvmspace));
+	pmap_replacevm(curthread->td_proc, newvmspace, 0);
+	lwkt_reltoken(&newvmspace->vm_map.token);
+	lwkt_reltoken(&oldvmspace->vm_map.token);
+	vmspace_free(oldvmspace);
+
 	kprintf("VMM: vmx_vmrun failed\n");
 	return err;
 }
