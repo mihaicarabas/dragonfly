@@ -1042,11 +1042,7 @@ vm_fault_vpagetable(struct faultstate *fs, vm_pindex_t *pindex,
 			unlock_and_deallocate(fs);
 			return (KERN_FAILURE);
 		}
-		if ((fault_type & VM_PROT_READ) && (vpte & VPTE_R) == 0) {
-			unlock_and_deallocate(fs);
-			return (KERN_FAILURE);
-		}
-		if ((fault_type & VM_PROT_WRITE) && (vpte & VPTE_W) == 0) {
+		if ((fault_type & VM_PROT_WRITE) && (vpte & VPTE_RW) == 0) {
 			unlock_and_deallocate(fs);
 			return (KERN_FAILURE);
 		}
@@ -1087,14 +1083,13 @@ vm_fault_vpagetable(struct faultstate *fs, vm_pindex_t *pindex,
 		 */
 		vm_page_activate(fs->m);
 		if ((fault_type & VM_PROT_WRITE) && (vpte & VPTE_V) &&
-		    (vpte & VPTE_W)) {
+		    (vpte & VPTE_RW)) {
 			if ((vpte & (VPTE_M|VPTE_A)) != (VPTE_M|VPTE_A)) {
 				atomic_set_long(ptep, VPTE_M | VPTE_A);
 				vm_page_dirty(fs->m);
 			}
 		}
-		if ((fault_type & VM_PROT_READ) && (vpte & VPTE_V) &&
-		    (vpte & VPTE_R)) {
+		if ((fault_type & VM_PROT_READ) && (vpte & VPTE_V)) {
 			if ((vpte & VPTE_A) == 0) {
 				atomic_set_long(ptep, VPTE_A);
 				vm_page_dirty(fs->m);
@@ -1169,6 +1164,7 @@ vm_fault_object(struct faultstate *fs, vm_pindex_t first_pindex,
 	 * access to force a re-fault.
 	 */
 	if (fs->entry->maptype == VM_MAPTYPE_VPAGETABLE) {
+//	    pmap_emulate_ad_bits(&curthread->td_lwp->lwp_vmspace->vm_pmap)) {
 		if ((fault_type & VM_PROT_WRITE) == 0)
 			fs->prot &= ~VM_PROT_WRITE;
 	}
