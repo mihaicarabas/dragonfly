@@ -7,16 +7,16 @@
  * Destroy the VM context of the thread
  */
 
-#define		VMM_GUEST_INIT		0
 #define		VMM_GUEST_RUN		1
-#define		VMM_GUEST_DESTROY	2
 
 #include <sys/types.h>
+#include <machine/frame.h>
 
 struct guest_options {
-	register_t ip;
-	register_t sp;
-	register_t cr3;
+	register_t guest_cr3;
+	register_t vmm_cr3;
+	struct trapframe tf;
+	uint8_t master;
 };
 
 
