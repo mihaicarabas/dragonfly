@@ -203,6 +203,7 @@ platform/pc64/x86_64/identcpu.c		standard
 platform/pc64/x86_64/amd64_mem.c	standard
 platform/pc64/x86_64/cpufreq_machdep.c    standard
 platform/pc64/x86_64/msi.c		standard
+platform/pc64/x86_64/uwrapper.c		standard
 
 platform/pc64/apic/lapic.c		standard
 platform/pc64/apic/ioapic.c		standard
@@ -264,6 +265,6 @@ vmx_assym.h				standard					\
 platform/pc64/vmm/vmm.c			standard
 platform/pc64/vmm/vmm_utils.c		standard
 platform/pc64/vmm/vmx.c			standard
+platform/pc64/vmm/ept.c			standard
 platform/pc64/vmm/vmx_trap.s		standard
 platform/pc64/vmm/svm.c			standard
-

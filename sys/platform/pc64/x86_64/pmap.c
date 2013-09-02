@@ -52,12 +52,12 @@
 #include "opt_msgbuf.h"
 
 #include <sys/param.h>
-#include <sys/systm.h>
 #include <sys/kernel.h>
 #include <sys/proc.h>
 #include <sys/msgbuf.h>
 #include <sys/vmmeter.h>
 #include <sys/mman.h>
+#include <sys/systm.h>
 
 #include <vm/vm.h>
 #include <vm/vm_param.h>
@@ -238,6 +238,17 @@ SYSCTL_INT(_machdep, OID_AUTO, pmap_mmu_optimize, CTLFLAG_RW,
     &pmap_mmu_optimize, 0, "Share page table pages when possible");
 
 #define DISABLE_PSE
+
+/* Standard user access funtions */
+extern int std_copyinstr (const void *udaddr, void *kaddr, size_t len,
+    size_t *lencopied);
+extern int std_copyin (const void *udaddr, void *kaddr, size_t len);
+extern int std_copyout (const void *kaddr, void *udaddr, size_t len);
+extern int std_fubyte (const void *base);
+extern int std_subyte (void *base, int byte);
+extern long std_fuword (const void *base);
+extern int std_suword (void *base, long word);
+extern int std_suword32 (void *base, int word);
 
 static void pv_hold(pv_entry_t pv);
 static int _pv_hold_try(pv_entry_t pv
@@ -1482,6 +1493,14 @@ pmap_pinit_defaults(struct pmap *pmap) {
 	bcopy(protection_codes, pmap->protection_codes, sizeof(protection_codes));
 	bcopy(pat_pte_index, pmap->pmap_cache_bits, sizeof(pat_pte_index));
 	pmap->pmap_cache_mask = X86_PG_NC_PWT | X86_PG_NC_PCD | X86_PG_PTE_PAT;
+	pmap->copyinstr = std_copyinstr;
+	pmap->copyin = std_copyin;
+	pmap->copyout = std_copyout;
+	pmap->fubyte = std_fubyte;
+	pmap->subyte = std_subyte;
+	pmap->fuword = std_fuword;
+	pmap->suword = std_suword;
+	pmap->suword32 = std_suword32;
 }
 /*
  * Initialize pmap0/vmspace0.  This pmap is not added to pmap_list because
@@ -4873,7 +4892,13 @@ pmap_setlwpvm(struct lwp *lp, struct vmspace *newvm)
 #if defined(SWTCH_OPTIM_STATS)
 			tlb_flush_count++;
 #endif
-			curthread->td_pcb->pcb_cr3 = vtophys(pmap->pm_pml4);
+			if (pmap->pmap_bits[TYPE_IDX] == REGULAR_PMAP) {
+				curthread->td_pcb->pcb_cr3 = vtophys(pmap->pm_pml4);
+			} else if (pmap->pmap_bits[TYPE_IDX] == EPT_PMAP) {
+				curthread->td_pcb->pcb_cr3 = KPML4phys;
+			} else {
+				panic("pmap_setlwpvm: unknown pmap type\n");
+			}
 			load_cr3(curthread->td_pcb->pcb_cr3);
 			pmap = vmspace_pmap(oldvm);
 			atomic_clear_cpumask(&pmap->pm_active, mycpu->gd_cpumask);
