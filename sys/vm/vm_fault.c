@@ -1164,7 +1164,12 @@ vm_fault_object(struct faultstate *fs, vm_pindex_t first_pindex,
 	 * access to force a re-fault.
 	 */
 	if (fs->entry->maptype == VM_MAPTYPE_VPAGETABLE) {
-//	    pmap_emulate_ad_bits(&curthread->td_lwp->lwp_vmspace->vm_pmap)) {
+		if ((fault_type & VM_PROT_WRITE) == 0)
+			fs->prot &= ~VM_PROT_WRITE;
+	}
+
+	if (curthread->td_lwp && curthread->td_lwp->lwp_vmspace &&
+	    pmap_emulate_ad_bits(&curthread->td_lwp->lwp_vmspace->vm_pmap)) {
 		if ((fault_type & VM_PROT_WRITE) == 0)
 			fs->prot &= ~VM_PROT_WRITE;
 	}

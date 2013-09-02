@@ -379,6 +379,10 @@ vmspace_terminate(struct vmspace *vm)
 		lwkt_gettoken(&vmspace_pmap(vm)->pm_token);
 		pmap_release(vmspace_pmap(vm));
 		lwkt_reltoken(&vmspace_pmap(vm)->pm_token);
+
+		if (vmspace_pmap(vm)->pmap_bits[TYPE_IDX] != REGULAR_PMAP) {
+			pmap_puninit(vmspace_pmap(vm));
+		}
 	}
 
 	lwkt_reltoken(&vm->vm_map.token);
@@ -3914,6 +3918,12 @@ RetryLookup:
 	 */
 	if (entry->maptype == VM_MAPTYPE_VPAGETABLE) {
 		if (prot & VM_PROT_WRITE)
+			fault_type |= VM_PROT_WRITE;
+	}
+
+	if (curthread->td_lwp && curthread->td_lwp->lwp_vmspace &&
+	    pmap_emulate_ad_bits(&curthread->td_lwp->lwp_vmspace->vm_pmap)) {
+		if ((prot & VM_PROT_WRITE) == 0)
 			fault_type |= VM_PROT_WRITE;
 	}
 

@@ -289,6 +289,14 @@ struct pmap {
 	int			protection_codes[PROTECTION_CODES_SIZE];
 	pt_entry_t		pmap_cache_bits[PAT_INDEX_SIZE];
 	pt_entry_t		pmap_cache_mask;
+	int (*copyinstr)(const void *, void *, size_t, size_t *);
+	int (*copyin)(const void *, void *, size_t);
+	int (*copyout)(const void *, void *, size_t);
+	int (*fubyte)(const void *);
+	int (*subyte)(void *, int);
+	long (*fuword)(const void *);
+	int (*suword)(void *, long);
+	int (*suword32)(void *, int);
 };
 
 #define CPUMASK_LOCK		CPUMASK(SMP_MAXCPU)
@@ -360,6 +368,11 @@ vm_paddr_t pmap_kextract(vm_offset_t);
 void	pmap_invalidate_range(pmap_t, vm_offset_t, vm_offset_t);
 void	pmap_invalidate_cache_pages(vm_page_t *pages, int count);
 void	pmap_invalidate_cache_range(vm_offset_t sva, vm_offset_t eva);
+
+static __inline int
+pmap_emulate_ad_bits(pmap_t pmap) {
+	return pmap->pm_flags & PMAP_EMULATE_AD_BITS;
+}
 
 #endif /* _KERNEL */
 
