@@ -1,12 +1,15 @@
-#include "vmm.h"
 
 #include <sys/systm.h>
 #include <sys/sysctl.h>
 #include <sys/eventhandler.h>
+#include <sys/proc.h>
+#include <sys/vkernel.h>
 
 #include <machine/vmm.h>
 #include <machine/cputypes.h>
 #include <machine/md_var.h>
+
+#include "vmm.h"
 
 static struct vmm_ctl *ctl = NULL;
 
@@ -138,4 +141,10 @@ vmm_vm_set_tls_area(void)
 		return ENODEV;
 	}
 	return ctl->vm_set_tls_area();
+}
+
+void
+vmm_lwp_return(struct lwp *lp, struct trapframe *frame)
+{
+	ctl->vm_lwp_return(lp, frame);
 }

@@ -41,6 +41,8 @@ struct vmm_ctl {
 	int (*vmdestroy)(void);
 	int (*vmrun)(void);
 	int (*vm_set_tls_area)(void);
+	void (*vm_lwp_return)(struct lwp *lp, struct trapframe *frame);
+
 };
 
 struct vmm_ctl* get_ctl_intel(void);
