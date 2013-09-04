@@ -3,6 +3,9 @@
 #include <sys/vmm_guest_ctl.h>
 #include <sys/types.h>
 #include <sys/mman.h>
+#include <sys/vkernel.h>
+
+#include <cpu/cpufunc.h>
 
 #include <stdlib.h>
 #include <stdio.h>
@@ -15,67 +18,79 @@
 #define vmm_printf(val, err, exp) \
 	printf("vmm_guest(%d): return %d, expected %d\n", val, err, exp);
 
-void test() {
-	int a;
-	int b;
-	int c;
-	int d;
-	int e;
+#define STACK_SIZE (512 * PAGE_SIZE)
 
-	printf("%x %x %x %x %x\n", &a, &b, &c, &d, &e);
-	FILE *f = fopen("test.test","w");
-	fprintf(f,"test");
-	fclose(f);
-}
 int
-main(void)
+vmm_boostrap(void)
 {
-	int error = 0;
-	int mib[3];
-	size_t len = 3;
-	int enable = 0;
-	int enabl2 = 0;
-	void *stack;
 	struct guest_options options;
+	uint64_t *ptr;
+	uint64_t stack_source;
+	uint64_t stack_size;
+	uint64_t stack_dest;
+	int pml4_stack_index;
+	int pdp_stack_index;
+	int pd_stack_index;
+	void *stack;
+	int i;
 
-//	sysctlnametomib("hw.vmm.enable", mib, &len);
-//	test();
-//	error = vmm_guest_ctl(100);
-//	vmm_printf(100, error, -1);
-
-	/* Disable vmm and make the vmm_guest syscall */
-//	printf ("hw.vmm.enable = 0\n");
-//	len = sizeof(int);
-//	if (sysctl(mib, 3, &enabl2, &len, &enable, len) == -1)
-//		perror("sysctl");
-
-//	error = vmm_guest_ctl(VMM_GUEST_INIT);
-//	vmm_printf(VMM_GUEST_INIT, error, -1);
-
-	/* Enable vmm and make the vmm_guest syscall */
-//	printf ("hw.vmm.enable = 1\n");
-//	enable = 1;
-//	if (sysctl(mib, 3, NULL, NULL, &enable, sizeof(int)) == -1)
-//		perror("sysctl");
-
-	stack = mmap(NULL, 64 * PAGE_SIZE, PROT_READ|PROT_WRITE|PROT_EXEC, MAP_ANON, -1, 0);
+	stack = mmap(NULL, STACK_SIZE,
+	    PROT_READ|PROT_WRITE|PROT_EXEC,
+	    MAP_ANON, -1, 0);
 
 	if (stack == MAP_FAILED) {
 		printf("Error on allocating stack\n");
 		return -1;
 	}
 
-	options.ip = (register_t) test;
-	options.sp = (register_t) ((uint64_t)stack + 64 * PAGE_SIZE - sizeof(register_t));
+	posix_memalign((void **) &ptr, PAGE_SIZE, 4 * PAGE_SIZE);
+	bzero(ptr, 4 * PAGE_SIZE);
 
-	error = vmm_guest_ctl(VMM_GUEST_INIT, &options);
-	vmm_printf(VMM_GUEST_INIT, error, 0);
+	uint64_t *pml4 = ptr;
+	uint64_t *pdp = (uint64_t *)((uint64_t)ptr + PAGE_SIZE);
+	uint64_t *pdp_stack = (uint64_t *)((uint64_t)ptr + 2 * PAGE_SIZE);
+	uint64_t *pd_stack = (uint64_t *)((uint64_t)ptr + 3 * PAGE_SIZE);
 
-	error = vmm_guest_ctl(VMM_GUEST_RUN, NULL);
-	vmm_printf(VMM_GUEST_RUN, error, 0);
+	pml4[0] = (uint64_t) pdp | VPTE_V | VPTE_RW| VPTE_U;
+	for (i = 0; i < VPTE_PAGE_ENTRIES; i++) {
+		pdp[i] = (uint64_t)i << 30;
+		pdp[i] |=  VPTE_V | VPTE_RW | VPTE_U | VPTE_PS;
+	}
 
-	error = vmm_guest_ctl(VMM_GUEST_DESTROY, NULL);
-	vmm_printf(VMM_GUEST_DESTROY, error, 0);
+	void *stack_addr = NULL;
+
+	pml4_stack_index = (uint64_t)&stack_addr >> PML4SHIFT;
+	pml4[pml4_stack_index] = (uint64_t) pdp_stack;
+	pml4[pml4_stack_index] |= VPTE_V | VPTE_RW| VPTE_U;
+
+	pdp_stack_index = ((uint64_t)&stack_addr & PML4MASK) >> PDPSHIFT;
+	pdp_stack[pdp_stack_index] = (uint64_t) pd_stack;
+	pdp_stack[pdp_stack_index] |= VPTE_V | VPTE_RW| VPTE_U;
+
+	pd_stack_index = ((uint64_t)&stack_addr & PDPMASK) >> PDRSHIFT;
+	pd_stack[pd_stack_index] = (uint64_t) stack;
+	pd_stack[pd_stack_index] |= VPTE_V | VPTE_RW| VPTE_U | VPTE_PS;
+
+	stack_source = (uint64_t)&stack_addr & ~PAGE_MASK;
+	stack_size = 0x800000000000ULL - stack_source;
+	stack_dest = (uint64_t) stack + STACK_SIZE - stack_size;
+
+	bcopy((void*)stack_source, (void *)stack_dest, stack_size);
+	options.guest_cr3 = (register_t) pml4;
+	options.master = 1;
+
+	if(vmm_guest_ctl(VMM_GUEST_RUN, &options)) {
+		printf("Error: VMM enter failed\n");
+	}
+	printf("vmm_bootstrap: VMM bootstrap success\n");
 
 	return 0;
 }
+int
+main(void)
+{
+	vmm_boostrap();
+	printf("vmm_test: VMM bootstrap success\n");
+	return 0;
+}
+
