@@ -692,6 +692,8 @@ vmx_vminit(struct guest_options *options)
 		vmx_vminit_master(options);
 	}
 
+	bcopy(&options->tf, &vti->guest, sizeof(struct trapframe));
+
 	vti->vmcs_region_na = kmalloc(vmx_region_size + VMXON_REGION_ALIGN_SIZE,
 		    M_TEMP,
 		    M_WAITOK | M_ZERO);
@@ -792,7 +794,8 @@ vmx_vminit(struct guest_options *options)
 
 	ERROR_IF(vmwrite(VMCS_GUEST_IA32_EFER, (EFER_LME | EFER_LMA)));
 
-	ERROR_IF(vmwrite(VMCS_GUEST_RFLAGS, PSL_I | 0x02));
+	vti->guest.tf_rflags = PSL_I | 0x02;
+	ERROR_IF(vmwrite(VMCS_GUEST_RFLAGS, vti->guest.tf_rflags));
 
 	ERROR_IF(vmwrite(VMCS_GUEST_CR3, (uint64_t) vti->guest_cr3));
 
@@ -801,7 +804,7 @@ vmx_vminit(struct guest_options *options)
 	/* Guest RIP and RSP */
 	ERROR_IF(vmwrite(VMCS_GUEST_RIP, options->tf.tf_rip));
 	ERROR_IF(vmwrite(VMCS_GUEST_RSP, options->tf.tf_rsp));
-
+	kprintf("RIP: %llx; RSP: %llx\n", (unsigned long long) options->tf.tf_rip, (unsigned long long) options->tf.tf_rsp);
 	/*
 	 * This field is included for future expansion.
 	 * Software should set this field to FFFFFFFF_FFFFFFFFH
@@ -811,15 +814,7 @@ vmx_vminit(struct guest_options *options)
 
 	ERROR_IF(vmwrite(VMCS_EPTP, vmx_eptp(vti->vmm_cr3)));
 
-
 	crit_exit();
-
-	/* Guest trapframe */
-	vti->guest.tf_rip = options->tf.tf_rip;
-	vti->guest.tf_cs = GSEL(GUCODE_SEL, SEL_UPL);
-	vti->guest.tf_rflags = PSL_I | 0x02;
-	vti->guest.tf_rsp = options->tf.tf_rsp;
-	vti->guest.tf_ss = GSEL(GUDATA_SEL, SEL_UPL);
 
 	return 0;
 error:

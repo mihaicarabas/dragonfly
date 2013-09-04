@@ -26,7 +26,6 @@ sys_vmm_guest_ctl(struct vmm_guest_ctl_args *uap)
 	struct lwp *lp = curthread->td_lwp;
 
 	clear_quickret();
-
 	switch (uap->op) {
 		case VMM_GUEST_RUN:
 			error = copyin(uap->options, &options, sizeof(struct guest_options));
@@ -34,6 +33,13 @@ sys_vmm_guest_ctl(struct vmm_guest_ctl_args *uap)
 				kprintf("sys_vmm_guest: error copyin guest_options\n");
 				goto out;
 			}
+
+			bcopy(uap->sysmsg_frame,&options.tf, sizeof(struct trapframe));
+
+			/* 
+			 * Be sure we return success if the VMM hook enters
+			 */
+			options.tf.tf_rax = 0;
 
 			error = vmm_vminit(&options);
 			if (error) {
@@ -48,10 +54,7 @@ sys_vmm_guest_ctl(struct vmm_guest_ctl_args *uap)
 			}
 
 			vmm_error = vmm_vmrun();
-			if (vmm_error) {
-				kprintf("sys_vmm_guest: vmm_vmrun failed\n");
-			}
-
+			
 			error = vmm_vmdestroy();
 			if (error) {
 				kprintf("sys_vmm_guest: vmm_vmdestroy failed\n");

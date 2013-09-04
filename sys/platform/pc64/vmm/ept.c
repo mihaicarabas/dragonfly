@@ -134,17 +134,17 @@ guest_phys_addr(struct vmspace *vm, register_t *gpa, register_t guest_cr3, vm_of
 		goto error;
 	}
 	if (pml4e & pmap->pmap_bits[PG_V_IDX]) {
-		err = get_pt_entry(vm, &pdpe, pml4e & PG_FRAME, uaddr >> PDPSHIFT);
+		err = get_pt_entry(vm, &pdpe, pml4e & PG_FRAME, (uaddr & PML4MASK) >> PDPSHIFT);
 		if (err) {
 			kprintf("get_pt_entry could not get pdpe\n");
 			goto error;
 		}
 		if (pdpe & pmap->pmap_bits[PG_V_IDX]) {
 			if (pdpe & pmap->pmap_bits[PG_PS_IDX]) {
-				*gpa = (pdpe & PG_FRAME) + (uaddr & PDPMASK);
+				*gpa = (pdpe & PG_FRAME) | (uaddr & PDPMASK);
 				goto out;
 			} else {
-				err = get_pt_entry(vm, &pde, pdpe & PG_FRAME, uaddr >> PDRSHIFT);
+				err = get_pt_entry(vm, &pde, pdpe & PG_FRAME, (uaddr & PDPMASK) >> PDRSHIFT);
 				if(err) {
 					kprintf("get_pt_entry could not get pde\n");
 
@@ -152,17 +152,17 @@ guest_phys_addr(struct vmspace *vm, register_t *gpa, register_t guest_cr3, vm_of
 				}
 				if (pde & pmap->pmap_bits[PG_V_IDX]) {
 					if (pde & pmap->pmap_bits[PG_PS_IDX]) {
-						*gpa = (pde & PG_FRAME) + (uaddr & PDRMASK);
+						*gpa = (pde & PG_FRAME) | (uaddr & PDRMASK);
 						goto out;
 					} else {
-						err = get_pt_entry(vm, &pte, pde & PG_FRAME, uaddr >> PAGE_SHIFT);
+						err = get_pt_entry(vm, &pte, pde & PG_FRAME, (uaddr & PDRMASK) >> PAGE_SHIFT);
 						if (err) {
 					kprintf("get_pt_entry could not get pte\n");
 
 							goto error;
 						}
 						if (pte & pmap->pmap_bits[PG_V_IDX]) {
-							*gpa = (pde & PG_FRAME) + (uaddr & PAGE_MASK);
+							*gpa = (pde & PG_FRAME) | (uaddr & PAGE_MASK);
 						} else {
 					kprintf("get_pt_entry pte not valid\n");
 
