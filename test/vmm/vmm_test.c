@@ -31,6 +31,7 @@ vmm_boostrap(void)
 	int pml4_stack_index;
 	int pdp_stack_index;
 	int pd_stack_index;
+	char tst[1024];
 	void *stack;
 	int i;
 
@@ -71,11 +72,7 @@ vmm_boostrap(void)
 	pd_stack[pd_stack_index] = (uint64_t) stack;
 	pd_stack[pd_stack_index] |= VPTE_V | VPTE_RW| VPTE_U | VPTE_PS;
 
-	stack_source = (uint64_t)&stack_addr & ~PAGE_MASK;
-	stack_size = 0x800000000000ULL - stack_source;
-	stack_dest = (uint64_t) stack + STACK_SIZE - stack_size;
-
-	bcopy((void*)stack_source, (void *)stack_dest, stack_size);
+	options.new_stack = (uint64_t)stack + STACK_SIZE;
 	options.guest_cr3 = (register_t) pml4;
 	options.master = 1;
 
