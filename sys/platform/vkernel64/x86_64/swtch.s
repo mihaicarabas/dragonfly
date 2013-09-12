@@ -128,11 +128,28 @@ ENTRY(cpu_heavy_switch)
 	movq	%r14,PCB_R14(%rdx)
 	movq	%r15,PCB_R15(%rdx)
 
-	movq	%rcx,%rbx			/* RBX = curthread */
-	movq	TD_LWP(%rcx),%rcx
+	/*
+	 * Clear the cpu bit in the pmap active mask.  The restore
+	 * function will set the bit in the pmap active mask.
+	 *
+	 * Special case: when switching between threads sharing the
+	 * same vmspace if we avoid clearing the bit we do not have
+	 * to reload %cr3 (if we clear the bit we could race page
+	 * table ops done by other threads and would have to reload
+	 * %cr3, because those ops will not know to IPI us).
+	 */
+	movq	%rcx,%rbx			/* RBX = oldthread */
+	movq	TD_LWP(%rcx),%rcx		/* RCX = oldlwp	*/
+	movq	TD_LWP(%rdi),%r13		/* R13 = newlwp */
+	movq	LWP_VMSPACE(%rcx), %rcx		/* RCX = oldvmspace */
+	testq	%r13,%r13			/* might not be a heavy */
+	jz	1f
+	cmpq	LWP_VMSPACE(%r13),%rcx		/* same vmspace? */
+	je	2f
+1:
 	movslq	PCPU(cpuid), %rax
-	movq	LWP_VMSPACE(%rcx), %rcx		/* RCX = vmspace */
 	MPLOCKED btrq	%rax, VM_PMAP+PM_ACTIVE(%rcx)
+2:
 
 	/*
 	 * Push the LWKT switch restore function, which resumes a heavy
