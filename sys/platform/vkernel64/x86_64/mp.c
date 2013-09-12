@@ -63,6 +63,8 @@
 
 extern pt_entry_t *KPTphys;
 
+extern int vmm_enabled;
+
 volatile cpumask_t stopped_cpus;
 cpumask_t	smp_active_mask = 1;  /* which cpus are ready for IPIs etc? */
 static int	boot_address;
@@ -93,7 +95,6 @@ static int bootAP;
 static int start_all_aps(u_int);
 void init_secondary(void);
 void *start_ap(void *);
-void *vmm_start_ap(void *);
 
 /*
  * Get SMP fully working before we start initializing devices.
@@ -143,40 +144,6 @@ start_ap(void *arg __unused)
 	return(NULL); /* NOTREACHED */
 }
 
-void*
-vmm_start_ap(void *arg __unused)
-{
-	void *stack;
-	struct guest_options options;
-	int error;
-
-	stack = mmap(NULL, KERNEL_STACK_SIZE, PROT_READ|PROT_WRITE|PROT_EXEC, MAP_ANON, -1, 0);
-	if (stack == MAP_FAILED) {
-		printf("Unable to allocate stack\n");
-		return -1;
-	}
-	options.ip = (register_t) start_ap; /* entry point for AP */
-	options.sp = (register_t) ((uint64_t)stack + KERNEL_STACK_SIZE - sizeof(register_t));
-
-	error = vmm_guest_ctl(VMM_GUEST_INIT, &options);
-	if (error) {
-		printf("VMM_GUEST_INIT failed. Fallback to classic...\n");
-		start_ap(NULL);
-	}
-
-	error = vmm_guest_ctl(VMM_GUEST_RUN, NULL);
-	if (error) {
-		printf("VMM_GUEST_RUN failed. Exiting...\n");
-
-		vmm_guest_ctl(VMM_GUEST_DESTROY, NULL);
-
-		return (NULL);
-	}
-
-	return(NULL);
-}
-
-
 /* storage for AP thread IDs */
 pthread_t ap_tids[MAXCPU];
 
@@ -184,7 +151,6 @@ void
 mp_start(void)
 {
 	int shift;
-
 	ncpus = optcpus;
 
 	mp_naps = ncpus - 1;
@@ -305,7 +271,6 @@ restart_cpus(cpumask_t map)
 
 	return(1);
 }
-
 void
 ap_init(void)
 {
@@ -420,6 +385,8 @@ start_all_aps(u_int boot_addr)
 	struct privatespace *ps;
 	vm_page_t m;
 	vm_offset_t va;
+	void *stack;
+	pthread_attr_t attr;
 #if 0
 	struct lwp_params params;
 #endif
@@ -429,6 +396,7 @@ start_all_aps(u_int boot_addr)
 	 * FIXME: rename ap_tids?
 	 */
 	ap_tids[0] = pthread_self();
+	pthread_attr_init(&attr);
 
 	vm_object_hold(&kernel_object);
 	for (x = 1; x <= mp_naps; x++)
@@ -483,7 +451,18 @@ start_all_aps(u_int boot_addr)
 		 * have already been enabled.
 		 */
 		cpu_disable_intr();
-		pthread_create(&ap_tids[x], NULL, vmm_start_ap, NULL);
+	
+		if (vmm_enabled) {
+			stack = mmap(NULL, KERNEL_STACK_SIZE,
+			    PROT_READ|PROT_WRITE|PROT_EXEC,
+			    MAP_ANON, -1, 0);
+			if (stack == MAP_FAILED) {
+				panic("Unable to allocate stack for thread %d\n", x);
+			}
+			pthread_attr_setstack(&attr, stack, KERNEL_STACK_SIZE);
+		}
+
+		pthread_create(&ap_tids[x], &attr, start_ap, NULL);
 		cpu_enable_intr();
 
 		while((smp_startup_mask & CPUMASK(x)) == 0) {
@@ -492,6 +471,7 @@ start_all_aps(u_int boot_addr)
 		}
 	}
 	vm_object_drop(&kernel_object);
+	pthread_attr_destroy(&attr);
 
 	return(ncpus - 1);
 }

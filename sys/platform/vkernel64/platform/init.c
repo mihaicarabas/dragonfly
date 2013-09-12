@@ -107,6 +107,7 @@ caddr_t ptvmmap;
 vpte_t	*KernelPTD;
 vpte_t	*KernelPTA;	/* Warning: Offset for direct VA translation */
 void *dmap_min_address;
+void *vkernel_stack;
 u_int cpu_feature;	/* XXX */
 int tsc_present;
 int tsc_invariant;
@@ -118,14 +119,17 @@ int real_ncpus;		/* number of real CPUs */
 int next_cpu;		/* next real CPU to lock a virtual CPU to */
 int vkernel_b_arg;	/* -b argument - no of logical CPU bits - only SMP */
 int vkernel_B_arg;	/* -B argument - no of core bits - only SMP */
-
+int vmm_enabled;	/* VMM HW assisted enable */
 struct privatespace *CPU_prvspace;
+
+extern uint64_t KPML4phys;	/* phys addr of kernel level 4 */
 
 static struct trapframe proc0_tf;
 static void *proc0paddr;
 
 static void init_sys_memory(char *imageFile);
 static void init_kern_memory(void);
+static void init_kern_memory_vmm(void);
 static void init_globaldata(void);
 static void init_vkernel(void);
 static void init_disk(char *diskExp[], int diskFileNum, enum vkdisk_type type);
@@ -140,52 +144,10 @@ static void init_locks(void);
 static int save_ac;
 static char **save_av;
 
-static int vkernel(void);
-
-int main(int ac, char **av) {
-	void *stack;
-	struct guest_options options;
-	int error;
-
-	save_ac = ac;
-	save_av = av;
-
-	stack = mmap(NULL, KERNEL_STACK_SIZE, PROT_READ|PROT_WRITE|PROT_EXEC, MAP_ANON, -1, 0);
-	if (stack == MAP_FAILED) {
-		printf("Unable to allocate stack\n");
-		return -1;
-	}
-	options.ip = (register_t) vkernel; /* entry point for VKERNEL */
-	options.sp = (register_t) ((uint64_t)stack + KERNEL_STACK_SIZE - sizeof(register_t));
-
-	error = vmm_guest_ctl(VMM_GUEST_INIT, &options);
-	if (error) {
-		printf("VMM_GUEST_INIT failed. Fallback to classic...\n");
-		vkernel();
-	}
-
-	error = vmm_guest_ctl(VMM_GUEST_RUN, NULL);
-	if (error) {
-		printf("VMM_GUEST_RUN failed. Exiting...\n");
-
-		vmm_guest_ctl(VMM_GUEST_DESTROY, NULL);
-
-		exit(error);
-	}
-
-	exit(EX_SOFTWARE);
-}
-
 /*
  * Kernel startup for virtual kernels - standard main()
  */
-static int
-vkernel(void)
-{
-	/* We don't pass by parameter the ac and av */
-	int ac = save_ac;
-	char **av = save_av;
-
+int main(int ac, char **av) {
 	char *memImageFile = NULL;
 	char *netifFile[VKNETIF_MAX];
 	char *diskFile[VKDISK_MAX];
@@ -393,10 +355,22 @@ vkernel(void)
 		}
 	}
 
+	/*
+	 * Check VMM presence
+	 */
+	vsize = sizeof(vmm_enabled);
+	sysctlbyname("hw.vmm.enable", &vmm_enabled, &vsize, NULL, 0);
+
 	writepid();
 	cpu_disable_intr();
-	init_sys_memory(memImageFile);
-	init_kern_memory();
+	if (vmm_enabled) {
+		/* use a MAP_ANON directly */
+		init_kern_memory_vmm();
+		printf("VKERNEL VMM BOOTSTRAP OK2!\n");
+	} else {
+		init_sys_memory(memImageFile);
+		init_kern_memory();
+	}
 	init_globaldata();
 	init_vkernel();
 	setrealcpu();
@@ -438,6 +412,7 @@ vkernel(void)
 		init_disk(cdFile, cdFileNum, VKD_CD);
 		init_disk(diskFile, diskFileNum, VKD_DISK);
 	}
+
 	init_netif(netifFile, netifFileNum);
 	init_exceptions();
 	mi_startup();
@@ -581,7 +556,7 @@ init_kern_memory(void)
 	pmap_bootstrap((vm_paddr_t *)&firstfree, (int64_t)base);
 
 	mcontrol(base, KERNEL_KVA_SIZE, MADV_SETMAP,
-		 0 | VPTE_R | VPTE_W | VPTE_V);
+		 0 | VPTE_RW | VPTE_V);
 
 	/*
 	 * phys_avail[] represents unallocated physical memory.  MI code
@@ -640,6 +615,116 @@ init_kern_memory(void)
 	ptvmmap = (caddr_t)virtual_start;
 	virtual_start += PAGE_SIZE;
 }
+
+static
+void
+init_kern_memory_vmm(void)
+{
+	int i;
+	void *firstfree;
+	struct guest_options options;
+
+	KvaStart = (vm_offset_t)KERNEL_KVA_START;
+	KvaSize = KERNEL_KVA_SIZE;
+	KvaEnd = KvaStart + KvaSize;
+
+	Maxmem = Maxmem_bytes >> PAGE_SHIFT;
+	physmem = Maxmem;
+
+	if (Maxmem_bytes < 64 * 1024 * 1024 || (Maxmem_bytes & SEG_MASK)) {
+		errx(1, "Bad maxmem specification: 64MB minimum, "
+		       "multiples of %dMB only",
+		       SEG_SIZE / 1024 / 1024);
+		/* NOT REACHED */
+	}
+
+	if (vmspace_create(NULL, 0, NULL) < 0)
+		panic("vmspace_create() failed");
+
+	
+	/* MAP_FILE? */
+	dmap_min_address = mmap(NULL, Maxmem_bytes, PROT_READ|PROT_WRITE|PROT_EXEC,
+	    MAP_ANON|MAP_SHARED, -1, 0);
+	if (dmap_min_address == MAP_FAILED) {
+		err(1, "Unable to mmap() RAM region!");
+		/* NOT REACHED */
+	}
+	printf("VKERNEL begin at: %p, %p\n", (void*) dmap_min_address, (void*)Maxmem_bytes);
+	vkernel_stack = mmap(NULL, KERNEL_STACK_SIZE,
+	    PROT_READ|PROT_WRITE|PROT_EXEC,
+	    MAP_ANON, -1, 0);
+	if (vkernel_stack == MAP_FAILED) {
+		err(1, "Unable to allocate stack\n");
+	}
+
+	/*
+	 * Bootstrap the kernel_pmap
+	 */
+	firstfree = dmap_min_address;
+
+	dmap_min_address = NULL; /* VIRT == PHYS in the first 512G */
+	pmap_bootstrap((vm_paddr_t *)&firstfree, (uint64_t)KvaStart);
+
+	/*
+	 * Enter VMM mode
+	 */
+	options.guest_cr3 = (register_t) KPML4phys;
+	options.new_stack = (uint64_t) vkernel_stack + KERNEL_STACK_SIZE;
+	options.master = 1;
+	if (vmm_guest_ctl(VMM_GUEST_RUN, &options)) {
+		err(1, "Unable to enter VMM mode.");
+	}
+	printf("VKERNEL VMM BOOTSTRAP OK!\n");
+	/*
+	 * phys_avail[] represents unallocated physical memory.  MI code
+	 * will use phys_avail[] to create the vm_page array.
+	 */
+	phys_avail[0] = (vm_paddr_t)firstfree;
+	phys_avail[0] = (phys_avail[0] + PAGE_MASK) & ~(vm_paddr_t)PAGE_MASK;
+	phys_avail[1] = (vm_paddr_t)firstfree + Maxmem_bytes;
+
+	/*
+	 * pmap_growkernel() will set the correct value.
+	 */
+	kernel_vm_end = 0;
+
+	/*
+	 * Allocate space for process 0's UAREA.
+	 */
+	proc0paddr = (void *)virtual_start;
+	for (i = 0; i < UPAGES; ++i) {
+		pmap_kenter_quick(virtual_start, phys_avail[0]);
+		virtual_start += PAGE_SIZE;
+		phys_avail[0] += PAGE_SIZE;
+	}
+
+	/*
+	 * crashdumpmap
+	 */
+	crashdumpmap = virtual_start;
+	virtual_start += MAXDUMPPGS * PAGE_SIZE;
+
+	/*
+	 * msgbufp maps the system message buffer
+	 */
+	assert((MSGBUF_SIZE & PAGE_MASK) == 0);
+	msgbufp = (void *)virtual_start;
+	for (i = 0; i < (MSGBUF_SIZE >> PAGE_SHIFT); ++i) {
+
+		pmap_kenter_quick(virtual_start, phys_avail[0]);
+		virtual_start += PAGE_SIZE;
+		phys_avail[0] += PAGE_SIZE;
+	}
+
+	msgbufinit(msgbufp, MSGBUF_SIZE);
+
+	/*
+	 * used by kern_memio for /dev/mem access
+	 */
+	ptvmmap = (caddr_t)virtual_start;
+	virtual_start += PAGE_SIZE;
+}
+
 
 /*
  * Map the per-cpu globaldata for cpu #0.  Allocate the space using

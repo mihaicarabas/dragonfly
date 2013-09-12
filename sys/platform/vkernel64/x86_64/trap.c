@@ -105,6 +105,7 @@ extern int trapwrite (unsigned addr);
 static int trap_pfault (struct trapframe *, int, vm_offset_t);
 static void trap_fatal (struct trapframe *, int, vm_offset_t);
 void dblfault_handler (void);
+extern int vmm_enabled;
 
 #if 0
 extern inthand_t IDTVEC(syscall);
@@ -1400,6 +1401,7 @@ go_user(struct intrframe *frame)
 {
 	struct trapframe *tf = (void *)&frame->if_rdi;
 	int r;
+	void *id;
 
 	/*
 	 * Interrupts may be disabled on entry, make sure all signals
@@ -1429,8 +1431,13 @@ go_user(struct intrframe *frame)
 		 * Set PGEX_U unconditionally, indicating a user frame (the
 		 * bit is normally set only by T_PAGEFLT).
 		 */
-		r = vmspace_ctl(&curproc->p_vmspace->vm_pmap, VMSPACE_CTL_RUN,
-				tf, &curthread->td_savevext);
+		if (vmm_enabled)
+			id = (void *)vtophys(curproc->p_vmspace->vm_pmap.pm_pml4);
+		else
+			id = &curproc->p_vmspace->vm_pmap;
+		
+		r = vmspace_ctl(id, VMSPACE_CTL_RUN, tf, &curthread->td_savevext);
+
 		frame->if_xflags |= PGEX_U;
 #if 0
 		kprintf("GO USER %d trap %ld EVA %08lx RIP %08lx RSP %08lx XFLAGS %02lx/%02lx\n",
