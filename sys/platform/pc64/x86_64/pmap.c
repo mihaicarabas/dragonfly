@@ -1559,6 +1559,12 @@ pmap_pinit(struct pmap *pmap)
 	pv_entry_t pv;
 	int j;
 
+	if (pmap->pm_pmlpv) {
+		if (pmap->pmap_bits[TYPE_IDX] != REGULAR_PMAP) {
+			pmap_puninit(pmap);
+		}
+	}
+
 	pmap_pinit_simple(pmap);
 	pmap->pm_flags &= ~PMAP_FLAG_SIMPLE;
 
@@ -4361,13 +4367,14 @@ pmap_testbit(vm_page_t m, int bit)
 		 * mark clean_map and ptes as never
 		 * modified.
 		 */
-		if (bit & (pmap->pmap_bits[PG_A_IDX] | pmap->pmap_bits[PG_M_IDX])) {
+		if (bit == PG_A_IDX || bit == PG_M_IDX) {
+				//& (pmap->pmap_bits[PG_A_IDX] | pmap->pmap_bits[PG_M_IDX])) {
 			if (!pmap_track_modified(pv->pv_pindex))
 				continue;
 		}
 
 		pte = pmap_pte_quick(pv->pv_pmap, pv->pv_pindex << PAGE_SHIFT);
-		if (*pte & bit) {
+		if (*pte & pmap->pmap_bits[bit]) {
 			vm_page_spin_unlock(m);
 			return TRUE;
 		}
