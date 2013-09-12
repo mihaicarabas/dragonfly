@@ -683,7 +683,7 @@ vmx_vminit_master(struct guest_options *options)
 		print_backtrace(3);
 
 	p->p_vmm = curthread->td_vmm;
-	kprintf("vmx_vminit_master: %llx, p_vmm:%llx\n", (unsigned long long) p, (unsigned long long) p->p_vmm);
+
 	if (p->p_vkernel) {
 		p->p_vkernel->vkernel_cr3 = options->guest_cr3;
 	}
