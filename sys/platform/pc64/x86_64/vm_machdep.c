@@ -215,6 +215,7 @@ cpu_prepare_lwp(struct lwp *lp, struct lwp_params *params)
 		return (error);
 
 	if (lp->lwp_proc->p_vmm) {
+		lp->lwp_thread->td_pcb->pcb_cr3 = KPML4phys;
 		cpu_set_fork_handler(lp,
 		    (void (*)(void *, struct trapframe *))vmm_lwp_return, lp);
 	} else {
