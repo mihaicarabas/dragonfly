@@ -23,9 +23,12 @@ sys_vmm_guest_ctl(struct vmm_guest_ctl_args *uap)
 	int error = 0;
 	int vmm_error = 0;
 	struct guest_options options;
-	struct lwp *lp = curthread->td_lwp;
+	struct trapframe *tf = uap->sysmsg_frame;
+	uint64_t stack_limit = USRSTACK;
+	uint8_t stack_page[PAGE_SIZE];
 
 	clear_quickret();
+
 	switch (uap->op) {
 		case VMM_GUEST_RUN:
 			error = copyin(uap->options, &options, sizeof(struct guest_options));
@@ -34,12 +37,30 @@ sys_vmm_guest_ctl(struct vmm_guest_ctl_args *uap)
 				goto out;
 			}
 
-			bcopy(uap->sysmsg_frame,&options.tf, sizeof(struct trapframe));
+			while(stack_limit > tf->tf_rsp) {
+				stack_limit -= PAGE_SIZE;
+				options.new_stack -= PAGE_SIZE;
+
+				error = copyin((void *)stack_limit, (void *)stack_page, PAGE_SIZE);
+				if (error) {
+					kprintf("sys_vmm_guest: error copyin stack\n");
+					goto out;
+				}
+
+				error = copyout((void *)stack_page, (void *)options.new_stack, PAGE_SIZE);
+				if (error) {
+					kprintf("sys_vmm_guest: error copyout stack\n");
+					goto out;
+				}
+			}
+
+			bcopy(tf, &options.tf, sizeof(struct trapframe));
 
 			/* 
 			 * Be sure we return success if the VMM hook enters
 			 */
 			options.tf.tf_rax = 0;
+			options.tf.tf_rflags &= ~PSL_C;
 
 			error = vmm_vminit(&options);
 			if (error) {
@@ -52,6 +73,8 @@ sys_vmm_guest_ctl(struct vmm_guest_ctl_args *uap)
 					goto out_exit;
 				}
 			}
+
+			generic_lwp_return(curthread->td_lwp, tf);
 
 			vmm_error = vmm_vmrun();
 			
@@ -69,12 +92,6 @@ sys_vmm_guest_ctl(struct vmm_guest_ctl_args *uap)
 			goto out;
 	}
 out_exit:
-	lwkt_gettoken(&lp->lwp_proc->p_token);
-	if (lp->lwp_proc->p_nthreads > 1) {
-		lwp_exit(0);    /* called w/ p_token held */
-		/* NOT REACHED */
-	}
-	lwkt_reltoken(&lp->lwp_proc->p_token);
 	exit1(W_EXITCODE(error, 0));
 out:
 	return (error);

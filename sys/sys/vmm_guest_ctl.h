@@ -15,6 +15,7 @@
 struct guest_options {
 	register_t guest_cr3;
 	register_t vmm_cr3;
+	register_t new_stack;
 	struct trapframe tf;
 	uint8_t master;
 };
