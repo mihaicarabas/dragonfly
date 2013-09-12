@@ -6,12 +6,14 @@
 #include <machine/pmap.h>
 #include <machine/specialreg.h>
 #include <machine/cpufunc.h>
+#include <machine/vmm.h>
 
 #include <vm/vm_extern.h>
 #include <vm/vm_map.h>
 
 #include "vmx.h"
 #include "ept.h"
+#include "vmm_utils.h"
 
 static uint64_t pmap_bits_ept[PG_BITS_SIZE];
 static pt_entry_t pmap_cache_bits_ept[PAT_INDEX_SIZE];
@@ -94,107 +96,6 @@ uint64_t vmx_eptp(uint64_t ept_address)
 {
 	return (ept_address | eptp_bits);
 }
-static int
-get_pt_entry(struct vmspace *vm, pt_entry_t *pte, vm_offset_t addr, int index)
-{
-	struct lwbuf *lwb;
-	struct lwbuf lwb_cache;
-	pt_entry_t *pt;
-	int err = 0;
-	vm_page_t m;
-
-	m = vm_fault_page(&vm->vm_map, addr,
-	    VM_PROT_READ, VM_FAULT_NORMAL, &err);
-	if (err) {
-		kprintf("get_pt_entry could not get addr %llx\n", (unsigned long long)addr);
-		goto error;
-	}
-	lwb = lwbuf_alloc(m, &lwb_cache);
-	pt = (pt_entry_t *)lwbuf_kva(lwb);
-	*pte = pt[index];
-	lwbuf_free(lwb);
-	vm_page_unhold(m);
-error:
-	return err;
-}
-
-static int
-guest_phys_addr(struct vmspace *vm, register_t *gpa, register_t guest_cr3, vm_offset_t uaddr)
-{
-	pmap_t pmap = vmspace_pmap(vm);
-	pt_entry_t pml4e;
-	pt_entry_t pdpe;
-	pt_entry_t pde;
-	pt_entry_t pte;
-	int err = 0;
-
-	err = get_pt_entry(vm, &pml4e, guest_cr3, uaddr >> PML4SHIFT);
-	if (err) {
-		kprintf("get_pt_entry could not get pml4e\n");
-		goto error;
-	}
-	if (pml4e & pmap->pmap_bits[PG_V_IDX]) {
-		err = get_pt_entry(vm, &pdpe, pml4e & PG_FRAME, (uaddr & PML4MASK) >> PDPSHIFT);
-		if (err) {
-			kprintf("get_pt_entry could not get pdpe\n");
-			goto error;
-		}
-		if (pdpe & pmap->pmap_bits[PG_V_IDX]) {
-			if (pdpe & pmap->pmap_bits[PG_PS_IDX]) {
-				*gpa = (pdpe & PG_FRAME) | (uaddr & PDPMASK);
-				goto out;
-			} else {
-				err = get_pt_entry(vm, &pde, pdpe & PG_FRAME, (uaddr & PDPMASK) >> PDRSHIFT);
-				if(err) {
-					kprintf("get_pt_entry could not get pde\n");
-
-					goto error;
-				}
-				if (pde & pmap->pmap_bits[PG_V_IDX]) {
-					if (pde & pmap->pmap_bits[PG_PS_IDX]) {
-						*gpa = (pde & PG_FRAME) | (uaddr & PDRMASK);
-						goto out;
-					} else {
-						err = get_pt_entry(vm, &pte, pde & PG_FRAME, (uaddr & PDRMASK) >> PAGE_SHIFT);
-						if (err) {
-					kprintf("get_pt_entry could not get pte\n");
-
-							goto error;
-						}
-						if (pte & pmap->pmap_bits[PG_V_IDX]) {
-							*gpa = (pde & PG_FRAME) | (uaddr & PAGE_MASK);
-						} else {
-					kprintf("get_pt_entry pte not valid\n");
-
-							err = EFAULT;
-							goto error;
-						}
-					}
-				} else {
-					kprintf("get_pt_entry pde not valid\n");
-
-					err = EFAULT;
-					goto error;
-				}
-			}
-		} else {
-					kprintf("get_pt_entry pdpee not valid\n");
-
-			err = EFAULT;
-			goto error;
-		}
-	} else {
-					kprintf("get_pt_entry pml4e not valid\n");
-
-		err = EFAULT;
-		goto error;
-	}
-out:
-error:
-	return err;
-
-
-}
 
 static int
 ept_copyin(const void *udaddr, void *kaddr, size_t len)
@@ -212,14 +113,15 @@ ept_copyin(const void *udaddr, void *kaddr, size_t len)
 	while (len) {
 		err = guest_phys_addr(vm, &gpa, guest_cr3, (vm_offset_t)udaddr);
 		if (err) {
-			kprintf("could not get guest_phys_addr\n");
+			kprintf("%s: could not get guest_phys_addr\n", __func__);
 			break;
 		}
-		m = vm_fault_page(&vm->vm_map, gpa,
+
+		m = vm_fault_page(&vm->vm_map, trunc_page(gpa),
 		    VM_PROT_READ, VM_FAULT_NORMAL, &err);
 		if (err) {
-			kprintf("could not fault in vm map, gpa: %llx\n", (unsigned long long) gpa);
-
+			kprintf("%s: could not fault in vm map, gpa: %llx\n",
+			    __func__, (unsigned long long) gpa);
 			break;
 		}
 
@@ -255,14 +157,19 @@ ept_copyout(const void *kaddr, void *udaddr, size_t len)
 
 	while (len) {
 		err = guest_phys_addr(vm, &gpa, guest_cr3, (vm_offset_t)udaddr);
-		if (err)
+		if (err) {
+			kprintf("%s: could not get guest_phys_addr\n", __func__);
 			break;
+		}
 
-		m = vm_fault_page(&vm->vm_map, gpa,
+		m = vm_fault_page(&vm->vm_map, trunc_page(gpa),
 		    VM_PROT_READ | VM_PROT_WRITE,
 		    VM_FAULT_NORMAL, &err);
-		if (err)
+		if (err) {
+			kprintf("%s: could not fault in vm map, gpa: %llx\n",
+			    __func__, (unsigned long long) gpa);
 			break;
+		}
 
 		n = PAGE_SIZE - ((vm_offset_t)udaddr & PAGE_MASK);
 		if (n > len)
@@ -276,6 +183,8 @@ ept_copyout(const void *kaddr, void *udaddr, size_t len)
 		udaddr = (char *)udaddr + n;
 		kaddr = (const char *)kaddr + n;
 		vm_page_dirty(m);
+		cpu_invlpg((char *)lwbuf_kva(lwb) +
+			     ((vm_offset_t)udaddr & PAGE_MASK));
 		lwbuf_free(lwb);
 		vm_page_unhold(m);
 	}

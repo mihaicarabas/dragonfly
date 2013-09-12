@@ -12,6 +12,8 @@
 #include <sys/vkernel.h>
 #include <ddb/ddb.h>
 
+#include <cpu/cpu.h>
+
 #include <machine/cpufunc.h>
 #include <machine/cputypes.h>
 #include <machine/smp.h>
@@ -34,6 +36,7 @@
 
 extern void trap(struct trapframe *frame);
 extern void syscall2(struct trapframe *frame);
+extern void vkernel_pagefault(struct trapframe *frame);
 
 static int vmx_check_cpu_migration(void);
 static int execute_vmptrld(struct vmx_thread_info *vti);
@@ -453,6 +456,11 @@ execute_vmxon(void *perr)
 static void
 execute_vmxoff(void *dummy)
 {
+	invept_desc_t desc = { 0 };
+
+	if (invept(INVEPT_TYPE_ALL_CONTEXTS, (uint64_t*) &desc))
+		kprintf("VMM: execute_vmxoff: invet failed on cpu%d\n", mycpu->gd_cpuid);
+
 	vmxoff();
 
 	/* Disable VMX */
@@ -671,7 +679,14 @@ vmx_vminit_master(struct guest_options *options)
 	vmspace_free(oldvmspace);
 
 	options->vmm_cr3 = vtophys(vmspace_pmap(newvmspace)->pm_pml4);
+	if (p->p_vmm)
+		print_backtrace(3);
+
 	p->p_vmm = curthread->td_vmm;
+	kprintf("vmx_vminit_master: %llx, p_vmm:%llx\n", (unsigned long long) p, (unsigned long long) p->p_vmm);
+	if (p->p_vkernel) {
+		p->p_vkernel->vkernel_cr3 = options->guest_cr3;
+	}
 
 	return 0;
 }
@@ -729,7 +744,7 @@ vmx_vminit(struct guest_options *options)
 	ERROR_IF(vmwrite(VMCS_HOST_CR4, rcr4()));
 
 	/* Load HOST EFER and PAT */
-//	ERROR_IF(vmwrite(VMCS_HOST_IA32_PAT, rdmsr(MSR_PAT)));
+	ERROR_IF(vmwrite(VMCS_HOST_IA32_PAT, rdmsr(MSR_PAT)));
 	ERROR_IF(vmwrite(VMCS_HOST_IA32_EFER, rdmsr(MSR_EFER)));
 
 	/* Load HOST selectors */
@@ -804,7 +819,7 @@ vmx_vminit(struct guest_options *options)
 	/* Guest RIP and RSP */
 	ERROR_IF(vmwrite(VMCS_GUEST_RIP, options->tf.tf_rip));
 	ERROR_IF(vmwrite(VMCS_GUEST_RSP, options->tf.tf_rsp));
-	kprintf("RIP: %llx; RSP: %llx\n", (unsigned long long) options->tf.tf_rip, (unsigned long long) options->tf.tf_rsp);
+
 	/*
 	 * This field is included for future expansion.
 	 * Software should set this field to FFFFFFFF_FFFFFFFFH
@@ -813,6 +828,8 @@ vmx_vminit(struct guest_options *options)
 	ERROR_IF(vmwrite(VMCS_LINK_POINTER, ~0ULL));
 
 	ERROR_IF(vmwrite(VMCS_EPTP, vmx_eptp(vti->vmm_cr3)));
+
+	vti->invept_desc.eptp = vmx_eptp(vti->vmm_cr3);
 
 	crit_exit();
 
@@ -1029,7 +1046,6 @@ vmx_handle_vmexit(void)
 	ERROR_IF(vti == NULL);
 
 	exit_reason = VMCS_BASIC_EXIT_REASON(vti->vmexit_reason);
-
 	switch (exit_reason) {
 		case EXIT_REASON_EXCEPTION:
 			dkprintf("VMM: handle_vmx_vmexit: EXIT_REASON_EXCEPTION with qualification "
@@ -1040,13 +1056,13 @@ vmx_handle_vmexit(void)
 			    (long long) vti->vmexit_interruption_error,
 			    (long long) vti->vmexit_instruction_length);
 
-			dkprintf("VMM: handle_vmx_vmexit: EXIT_REASON_EXCEPTION rax: %llx, rip: %llx, "
-			    "rsp: %llx,  rdi: %llx, rsi: %llx\n",
+			dkprintf("VMM: handle_vmx_vmexit: rax: %llx, rip: %llx, "
+			    "rsp: %llx,  rdi: %llx, rsi: %llx, %d, vti: %p, master: %p\n",
 			    (long long)vti->guest.tf_rax,
 			    (long long)vti->guest.tf_rip,
 			    (long long)vti->guest.tf_rsp,
 			    (long long)vti->guest.tf_rdi,
-			    (long long)vti->guest.tf_rsi);
+			    (long long)vti->guest.tf_rsi, exit_reason, vti, curproc->p_vmm);
 
 			exception_type = VMCS_EXCEPTION_TYPE(vti->vmexit_interruption_info);
 			exception_number = VMCS_EXCEPTION_NUMBER(vti->vmexit_interruption_info);
@@ -1056,16 +1072,10 @@ vmx_handle_vmexit(void)
 					case IDT_UD:
 						dkprintf("VMM: handle_vmx_vmexit: VMCS_EXCEPTION_HARDWARE IDT_UD\n");
 #ifdef VMM_DEBUG
-						uint8_t instruction[INSTRUCTION_MAX_LENGTH];
+						uint8_t instr[INSTRUCTION_MAX_LENGTH];
 						/* Check to see if its syscall asm instuction */
-						user_vkernel_copyin(
-						    (const void *) vti->guest.tf_rip,
-						    instruction,
-						    vti->vmexit_instruction_length);
-						
-						if (instr_check(&syscall_asm,
-						    (void *) instruction,
-						    (uint8_t) vti->vmexit_instruction_length)) {
+						if (copyin((const void *) vti->guest.tf_rip, instr, vti->vmexit_instruction_length) &&
+						    instr_check(&syscall_asm,(void *) instr, (uint8_t) vti->vmexit_instruction_length)) {
 							kprintf("VMM: handle_vmx_vmexit: UD different from syscall: ");
 							db_disasm((db_addr_t) instruction, FALSE, NULL);
 						}
@@ -1097,10 +1107,11 @@ vmx_handle_vmexit(void)
 						vti->guest.tf_xflags = 0;
 						vti->guest.tf_trapno = T_PAGEFLT;
 
-						tf_old = curthread->td_lwp->lwp_md.md_regs;
-						curthread->td_lwp->lwp_md.md_regs = &vti->guest;
-						trap(&vti->guest);
-						curthread->td_lwp->lwp_md.md_regs = tf_old;
+
+						tf_old = lp->lwp_md.md_regs;
+						lp->lwp_md.md_regs = &vti->guest;
+						vkernel_pagefault(&vti->guest);
+						lp->lwp_md.md_regs = tf_old;
 
 						break;
 					default:
@@ -1137,18 +1148,18 @@ vmx_handle_vmexit(void)
 		case EXIT_REASON_EPT_FAULT:
 			fault_type = vmx_ept_fault_type(vti->vmexit_qualification);
 
-			kprintf("VMM: handle_vmx_vmexit: EXIT_REASON_EPT_FAULT with qualification %lld,"
-			    "GPA: %llx, fault_Type: %d\n",(long long) vti->vmexit_qualification, (unsigned long long) vti->guest_physical_address, fault_type);
+			dkprintf("VMM: handle_vmx_vmexit: EXIT_REASON_EPT_FAULT with qualification %lld,"
+			    "GPA: %llx, fault_Type: %d\n",(long long) vti->vmexit_qualification,
+			    (unsigned long long) vti->guest_physical_address, fault_type);
 
 			fault_type = vmx_ept_fault_type(vti->vmexit_qualification);
 			gpa_prot = vmx_ept_gpa_prot(vti->vmexit_qualification);
 
-			rv = vm_fault(&curthread->td_lwp->lwp_vmspace->vm_map, vti->guest_physical_address, fault_type, VM_FAULT_NORMAL);
+			rv = vm_fault(&curthread->td_lwp->lwp_vmspace->vm_map,
+			    trunc_page(vti->guest_physical_address), fault_type, VM_FAULT_NORMAL);
 			if (rv != KERN_SUCCESS) {
-
 				kprintf("VMM: handle_vmx_vmexit: EXIT_REASON_EPT_FAULT couldn't resolve %llx\n",
 				    (unsigned long long) vti->guest_physical_address);
-
 				err = -1;
 				goto error;
 			}
@@ -1203,7 +1214,6 @@ restart:
 			gd->gd_cpuid, vti->last_cpu);
 		goto restart;
 	}
-
 	/*
 	 * Load specific Guest registers
 	 * GP registers will be loaded in vmx_launch/resume
@@ -1221,6 +1231,13 @@ restart:
 	 * sure it loads the correct value.
 	 */
 	ERROR_IF(vmwrite(VMCS_HOST_FS_BASE, mdcpu->gd_user_fs));
+
+	if (vti->eptgen != curthread->td_proc->p_vmspace->vm_pmap.pm_invgen) {
+		vti->eptgen = curthread->td_proc->p_vmspace->vm_pmap.pm_invgen;
+
+		ERROR_IF(invept(INVEPT_TYPE_SINGLE_CONTEXT,
+		    (uint64_t*)&vti->invept_desc));
+	}
 
 	if (vti->launched) { /* vmresume */
 		dkprintf("\n\nVMM: vmx_vmrun: vmx_resume\n");
@@ -1274,13 +1291,20 @@ vmx_lwp_return(struct lwp *lp, struct trapframe *frame)
 	int vmrun_err;
 	struct vmx_thread_info * master_vti = curproc->p_vmm;
 
+	dkprintf("VMM: vmx_lwp_return \n");
+
+	bzero(&options, sizeof(struct guest_options));
+
 	bcopy(frame, &options.tf, sizeof(struct trapframe));
 
 	options.guest_cr3 = master_vti->guest_cr3;
 	options.vmm_cr3 = master_vti->vmm_cr3;
 
 	vmx_vminit(&options);
+	generic_lwp_return(lp, frame);
+
 	vmrun_err = vmx_vmrun();
+
 	vmx_vmdestroy();
 
 	lwkt_gettoken(&lp->lwp_proc->p_token);
@@ -1290,6 +1314,20 @@ vmx_lwp_return(struct lwp *lp, struct trapframe *frame)
 	}
 	lwkt_reltoken(&lp->lwp_proc->p_token);
 	exit1(W_EXITCODE(vmrun_err, 0));
+}
+static void
+vmx_set_guest_cr3(register_t guest_cr3)
+{
+	struct vmx_thread_info *vti = (struct vmx_thread_info *) curthread->td_vmm;
+	vti->guest_cr3 = guest_cr3;
+}
+
+static int
+vmx_vm_get_gpa(register_t *gpa, register_t uaddr)
+{
+	struct vmx_thread_info *vti = (struct vmx_thread_info *) curthread->td_vmm;
+
+	return guest_phys_addr(curproc->p_vmspace, gpa, vti->guest_cr3, uaddr);
 }
 
 static struct vmm_ctl ctl_vmx = {
@@ -1302,6 +1340,8 @@ static struct vmm_ctl ctl_vmx = {
 	.vmrun = vmx_vmrun,
 	.vm_set_tls_area = vmx_set_tls_area,
 	.vm_lwp_return = vmx_lwp_return,
+	.vm_set_guest_cr3 = vmx_set_guest_cr3,
+	.vm_get_gpa = vmx_vm_get_gpa,
 };
 
 struct vmm_ctl*

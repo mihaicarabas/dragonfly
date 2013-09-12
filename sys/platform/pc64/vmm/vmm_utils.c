@@ -36,37 +36,97 @@ instr_check(struct instr_decode *instr, void *ip, uint8_t instr_length)
 	return 0;
 }
 
-int
-user_vkernel_copyin(const void *udaddr, void *kaddr, size_t len)
+static int
+get_pt_entry(struct vmspace *vm, pt_entry_t *pte, vm_offset_t addr, int index)
 {
-	struct vmspace *vm = curthread->td_lwp->lwp_vmspace;
 	struct lwbuf *lwb;
 	struct lwbuf lwb_cache;
+	pt_entry_t *pt;
+	int err = 0;
 	vm_page_t m;
-	int error;
-	size_t n;
 
-	error = 0;
-	while (len) {
-		m = vm_fault_page(&vm->vm_map, trunc_page((vm_offset_t)udaddr),
-				  VM_PROT_READ,
-				  VM_FAULT_NORMAL, &error);
-		if (error)
-			break;
-		n = PAGE_SIZE - ((vm_offset_t)udaddr & PAGE_MASK);
-		if (n > len)
-			n = len;
-		lwb = lwbuf_alloc(m, &lwb_cache);
-		bcopy((char *)lwbuf_kva(lwb)+((vm_offset_t)udaddr & PAGE_MASK),
-		      kaddr, n);
-		len -= n;
-		udaddr = (const char *)udaddr + n;
-		kaddr = (char *)kaddr + n;
-		lwbuf_free(lwb);
-		vm_page_unhold(m);
+	m = vm_fault_page(&vm->vm_map, trunc_page(addr),
+	    VM_PROT_READ, VM_FAULT_NORMAL, &err);
+	if (err) {
+		kprintf("%s: could not get addr %llx\n",
+		    __func__, (unsigned long long)addr);
+		goto error;
 	}
-	if (error)
-		error = EFAULT;
-	return (error);
+	lwb = lwbuf_alloc(m, &lwb_cache);
+	pt = (pt_entry_t *)lwbuf_kva(lwb) + ((vm_offset_t)addr & PAGE_MASK);
+
+	*pte = pt[index];
+	lwbuf_free(lwb);
+	vm_page_unhold(m);
+error:
+	return err;
 }
 
+int
+guest_phys_addr(struct vmspace *vm, register_t *gpa, register_t guest_cr3, vm_offset_t uaddr)
+{
+	pt_entry_t pml4e;
+	pt_entry_t pdpe;
+	pt_entry_t pde;
+	pt_entry_t pte;
+	int err = 0;
+
+	err = get_pt_entry(vm, &pml4e, guest_cr3, uaddr >> PML4SHIFT);
+	if (err) {
+		kprintf("%s: could not get pml4e\n", __func__);
+		goto error;
+	}
+	if (pml4e & kernel_pmap.pmap_bits[PG_V_IDX]) {
+		err = get_pt_entry(vm, &pdpe, pml4e & PG_FRAME, (uaddr & PML4MASK) >> PDPSHIFT);
+		if (err) {
+			kprintf("%s: could not get pdpe\n", __func__);
+			goto error;
+		}
+		if (pdpe & kernel_pmap.pmap_bits[PG_V_IDX]) {
+			if (pdpe & kernel_pmap.pmap_bits[PG_PS_IDX]) {
+				*gpa = (pdpe & PG_FRAME) | (uaddr & PDPMASK);
+				goto out;
+			} else {
+				err = get_pt_entry(vm, &pde, pdpe & PG_FRAME, (uaddr & PDPMASK) >> PDRSHIFT);
+				if(err) {
+					kprintf("%s: could not get pdpe\n", __func__);
+					goto error;
+				}
+				if (pde & kernel_pmap.pmap_bits[PG_V_IDX]) {
+					if (pde & kernel_pmap.pmap_bits[PG_PS_IDX]) {
+						*gpa = (pde & PG_FRAME) | (uaddr & PDRMASK);
+						goto out;
+					} else {
+						err = get_pt_entry(vm, &pte, pde & PG_FRAME, (uaddr & PDRMASK) >> PAGE_SHIFT);
+						if (err) {
+							kprintf("%s: could not get pte\n", __func__);
+							goto error;
+						}
+						if (pte & kernel_pmap.pmap_bits[PG_V_IDX]) {
+							*gpa = (pte & PG_FRAME) | (uaddr & PAGE_MASK);
+						} else {
+							kprintf("%s: pte not valid\n", __func__);
+							err = EFAULT;
+							goto error;
+						}
+					}
+				} else {
+					kprintf("%s: pde not valid\n", __func__);
+					err = EFAULT;
+					goto error;
+				}
+			}
+		} else {
+			kprintf("%s: pdpe not valid\n", __func__);
+			err = EFAULT;
+			goto error;
+		}
+	} else {
+		kprintf("%s: pml4e not valid\n", __func__);
+		err = EFAULT;
+		goto error;
+	}
+out:
+error:
+	return err;
+}

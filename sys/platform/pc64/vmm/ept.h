@@ -40,12 +40,24 @@
 #define	EPT_VIOLATION_GPA_WRITEABLE	(1ULL << 4)
 #define	EPT_VIOLATION_GPA_EXECUTABLE	(1ULL << 5)
 
+#define	INVEPT_TYPE_SINGLE_CONTEXT	1UL
+#define	INVEPT_TYPE_ALL_CONTEXTS	2UL
+
+struct invept_desc {
+	uint64_t	eptp;
+	uint64_t	_res;
+};
+typedef struct invept_desc invept_desc_t;
+
+CTASSERT(sizeof(struct invept_desc) == 16);
+
 int vmx_ept_init(void);
 void vmx_ept_pmap_pinit(pmap_t pmap);
 uint64_t vmx_eptp(uint64_t ept_address);
 
 static __inline int
-vmx_ept_fault_type(uint64_t qualification){
+vmx_ept_fault_type(uint64_t qualification)
+{
 	if (qualification & EPT_VIOLATION_WRITE)
 		return VM_PROT_WRITE;
 	else if (qualification & EPT_VIOLATION_INST_FETCH)
@@ -55,7 +67,8 @@ vmx_ept_fault_type(uint64_t qualification){
 }
 
 static __inline int
-vmx_ept_gpa_prot(uint64_t qualification){
+vmx_ept_gpa_prot(uint64_t qualification)
+{
 	int prot = 0;
 
 	if (qualification & EPT_VIOLATION_GPA_READABLE)

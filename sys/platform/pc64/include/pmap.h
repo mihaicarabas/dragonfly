@@ -285,6 +285,7 @@ struct pmap {
 	int			pm_generation;	/* detect pvlist deletions */
 	struct spinlock		pm_spin;
 	struct lwkt_token	pm_token;
+	long			pm_invgen;
 	uint64_t		pmap_bits[PG_BITS_SIZE];
 	int			protection_codes[PROTECTION_CODES_SIZE];
 	pt_entry_t		pmap_cache_bits[PAT_INDEX_SIZE];

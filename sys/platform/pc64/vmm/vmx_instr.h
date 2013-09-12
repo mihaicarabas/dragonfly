@@ -113,4 +113,18 @@ vmread(uint64_t reg, uint64_t *addr)
 
 	return err;
 }
+
+static inline int
+invept(uint64_t type, uint64_t *desc_addr)
+{
+	int err;
+
+	__asm __volatile("invept %[desc_addr], %[type];"
+			 GET_ERROR_CODE
+			 : [err] "=r" (err)
+			 : [desc_addr] "m" (*desc_addr), [type] "r" (type)
+			 : "memory");
+	return err;
+}
+
 #endif

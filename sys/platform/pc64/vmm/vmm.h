@@ -42,6 +42,9 @@ struct vmm_ctl {
 	int (*vmrun)(void);
 	int (*vm_set_tls_area)(void);
 	void (*vm_lwp_return)(struct lwp *lp, struct trapframe *frame);
+	void (*vm_set_guest_cr3)(register_t);
+	int (*vm_get_gpa)(register_t*, register_t);
+
 
 };
 

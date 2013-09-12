@@ -3,6 +3,8 @@
 
 #include <machine/pmap.h>
 
+#include "ept.h"
+
 #define BIT(x)	(1ULL << x)
 
 
@@ -57,6 +59,8 @@ struct vmx_thread_info {
 
 	uint64_t	guest_cr3;
 	uint64_t	vmm_cr3;
+	invept_desc_t	invept_desc;
+	long		eptgen;
 };
 
 typedef enum {
