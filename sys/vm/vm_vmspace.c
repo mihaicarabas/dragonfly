@@ -51,6 +51,7 @@
 #include <vm/pmap.h>
 
 #include <machine/vmparam.h>
+#include <machine/vmm.h>
 
 #include <sys/sysref2.h>
 #include <sys/mplock2.h>
@@ -106,6 +107,9 @@ sys_vmspace_create(struct vmspace_create_args *uap)
 		}
 		lwkt_reltoken(&proc_token);
 	}
+
+	if (curthread->td_vmm)
+		return 0;
 
 	get_mplock();
 
@@ -181,7 +185,7 @@ sys_vmspace_ctl(struct vmspace_ctl_args *uap)
 {
 	struct vkernel_proc *vkp;
 	struct vkernel_lwp *vklp;
-	struct vmspace_entry *ve;
+	struct vmspace_entry *ve = NULL;
 	struct lwp *lp;
 	struct proc *p;
 	int framesz;
@@ -195,10 +199,12 @@ sys_vmspace_ctl(struct vmspace_ctl_args *uap)
 
 	get_mplock();
 	lwkt_gettoken(&vkp->token);
-	if ((ve = vkernel_find_vmspace(vkp, uap->id)) == NULL) {
-		error = ENOENT;
-		goto done;
-	}
+
+	if (curthread->td_vmm == NULL)
+		if ((ve = vkernel_find_vmspace(vkp, uap->id)) == NULL) {
+			error = ENOENT;
+			goto done;
+		}
 
 	switch(uap->cmd) {
 	case VMSPACE_CTL_RUN:
@@ -207,7 +213,8 @@ sys_vmspace_ctl(struct vmspace_ctl_args *uap)
 		 * install the passed register context.  Return with
 		 * EJUSTRETURN so the syscall code doesn't adjust the context.
 		 */
-		atomic_add_int(&ve->refs, 1);
+		if (curthread->td_vmm == NULL)
+			atomic_add_int(&ve->refs, 1);
 		framesz = sizeof(struct trapframe);
 		if ((vklp = lp->lwp_vkernel) == NULL) {
 			vklp = kmalloc(sizeof(*vklp), M_VKERNEL,
@@ -235,10 +242,16 @@ sys_vmspace_ctl(struct vmspace_ctl_args *uap)
 			bcopy(&vklp->save_vextframe.vx_tls, &curthread->td_tls,
 			      sizeof(vklp->save_vextframe.vx_tls));
 			set_user_TLS();
-			atomic_subtract_int(&ve->refs, 1);
+			if (curthread->td_vmm == NULL)
+				atomic_subtract_int(&ve->refs, 1);
 		} else {
-			vklp->ve = ve;
-			pmap_setlwpvm(lp, ve->vmspace);
+			if (curthread->td_vmm == NULL) {
+				vklp->ve = ve;
+				pmap_setlwpvm(lp, ve->vmspace);
+			} else {
+				vklp->ve = uap->id;
+				vmm_vm_set_guest_cr3((register_t)uap->id);
+			}
 			set_user_TLS();
 			set_vkernel_fp(uap->sysmsg_frame);
 			error = EJUSTRETURN;
@@ -697,18 +710,22 @@ vkernel_trap(struct lwp *lp, struct trapframe *frame)
 	 */
 	vklp = lp->lwp_vkernel;
 	KKASSERT(vklp);
-	ve = vklp->ve;
-	KKASSERT(ve != NULL);
+	if (curthread->td_vmm == NULL) {
+		ve = vklp->ve;
+		KKASSERT(ve != NULL);
 
-	/*
-	 * Switch the LWP vmspace back to the virtual kernel's VM space.
-	 */
-	vklp->ve = NULL;
-	pmap_setlwpvm(lp, p->p_vmspace);
-	KKASSERT(ve->refs > 0);
-	atomic_subtract_int(&ve->refs, 1);
-	/* ve is invalid once we kill our ref */
-
+		/*
+		 * Switch the LWP vmspace back to the virtual kernel's VM space.
+		 */
+		vklp->ve = NULL;
+		pmap_setlwpvm(lp, p->p_vmspace);
+		KKASSERT(ve->refs > 0);
+		atomic_subtract_int(&ve->refs, 1);
+		/* ve is invalid once we kill our ref */
+	} else {
+		vklp->ve = NULL;
+		vmm_vm_set_guest_cr3(p->p_vkernel->vkernel_cr3);
+	}
 	/*
 	 * Copy the emulated process frame to the virtual kernel process.
 	 * The emulated process cannot change TLS descriptors so don't

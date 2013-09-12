@@ -379,10 +379,6 @@ vmspace_terminate(struct vmspace *vm)
 		lwkt_gettoken(&vmspace_pmap(vm)->pm_token);
 		pmap_release(vmspace_pmap(vm));
 		lwkt_reltoken(&vmspace_pmap(vm)->pm_token);
-
-		if (vmspace_pmap(vm)->pmap_bits[TYPE_IDX] != REGULAR_PMAP) {
-			pmap_puninit(vmspace_pmap(vm));
-		}
 	}
 
 	lwkt_reltoken(&vm->vm_map.token);
@@ -1892,6 +1888,10 @@ vm_map_madvise(vm_map_t map, vm_offset_t start, vm_offset_t end,
 	case MADV_CORE:
 	case MADV_SETMAP:
 	case MADV_INVAL:
+		if (curthread->td_vmm) {
+			vm_map_entry_release(count);
+			return(0);
+		}
 		modify_map = 1;
 		vm_map_lock(map);
 		break;
