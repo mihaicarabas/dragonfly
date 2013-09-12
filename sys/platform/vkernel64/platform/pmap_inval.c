@@ -155,15 +155,15 @@ pmap_inval_pde_quick(volatile vpte_t *ptep, struct pmap *pmap, vm_offset_t va)
 
 /*
  * These carefully handle interactions with other cpus and return
- * the original vpte.  Clearing VPTE_W prevents us from racing the
+ * the original vpte.  Clearing VPTE_RW prevents us from racing the
  * setting of VPTE_M, allowing us to invalidate the tlb (the real cpu's
  * pmap) and get good status for VPTE_M.
  *
  * When messing with page directory entries we have to clear the cpu
  * mask to force a reload of the kernel's page table mapping cache.
  *
- * clean: clear VPTE_M and VPTE_W
- * setro: clear VPTE_W
+ * clean: clear VPTE_M and VPTE_RW
+ * setro: clear VPTE_RW
  * load&clear: clear entire field
  */
 #include<stdio.h>

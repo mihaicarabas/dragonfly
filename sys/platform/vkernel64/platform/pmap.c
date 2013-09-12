@@ -3001,7 +3001,7 @@ pmap_clearbit(vm_page_t m, int bit)
 		/*
 		 * Careful here.  We can use a locked bus instruction to
 		 * clear VPTE_A or VPTE_M safely but we need to synchronize
-		 * with the target cpus when we mess with VPTE_W.
+		 * with the target cpus when we mess with VPTE_RW.
 		 *
 		 * On virtual kernels we must force a new fault-on-write
 		 * in the real kernel if we clear the Modify bit ourselves,
@@ -3013,7 +3013,7 @@ pmap_clearbit(vm_page_t m, int bit)
 			if (bit == VPTE_RW) {
 				/*
 				 * We must also clear VPTE_M when clearing
-				 * VPTE_W
+				 * VPTE_RW
 				 */
 				pbits = pmap_clean_pte(pte, pv->pv_pmap,
 						       pv->pv_va);
