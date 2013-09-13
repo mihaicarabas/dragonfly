@@ -111,16 +111,13 @@ cothread_create(void (*thr_func)(cothread_t cotd),
 			panic("Unable to allocate stack for cothread\n");
 		}
 		pthread_attr_setstack(&attr, stack, KERNEL_STACK_SIZE);
-		kprintf("set stac; %llx\n", (unsigned long long) stack);
 	}
-	kprintf("Am juns in cothreadasdada\n");
 	crit_enter();
 	cpu_mask_all_signals();
 	pthread_create(&cotd->pthr, &attr, (void *)cothread_thread, cotd);
 	cpu_unmask_all_signals();
 	crit_exit();
 	pthread_attr_destroy(&attr);
-	kprintf("Am iesit in cothreadasdada\n");
 
 	return(cotd);
 }
