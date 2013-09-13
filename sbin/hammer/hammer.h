@@ -62,6 +62,15 @@
 
 #include <libhammer.h>
 
+struct softprune {
+	struct softprune *next;
+	struct statfs fs;
+	char *filesystem;
+	struct hammer_ioc_prune prune;
+	int maxelms;
+	int prune_min;
+};
+
 extern int RecurseOpt;
 extern int VerboseOpt;
 extern int QuietOpt;
@@ -108,7 +117,6 @@ void hammer_cmd_pseudofs_update(char **av, int ac);
 void hammer_cmd_pseudofs_destroy(char **av, int ac);
 void hammer_cmd_pseudofs_upgrade(char **av, int ac);
 void hammer_cmd_pseudofs_downgrade(char **av, int ac);
-void hammer_cmd_status(char **av, int ac);
 void hammer_cmd_snapshot(char **av, int ac);
 void hammer_cmd_snap(char **av, int ac, int tostdout, int fsbase);
 void hammer_cmd_snapls(char **av, int ac);
@@ -116,7 +124,7 @@ void hammer_cmd_snaprm(char **av, int ac);
 void hammer_cmd_cleanup(char **av, int ac);
 void hammer_cmd_config(char **av, int ac);
 void hammer_cmd_viconfig(char **av, int ac);
-void hammer_cmd_info(void);
+void hammer_cmd_info(char **av, int ac);
 void hammer_cmd_get_version(char **av, int ac);
 void hammer_cmd_set_version(char **av, int ac);
 void hammer_cmd_volume_add(char **av, int ac);
@@ -132,3 +140,6 @@ void hammer_reset_cycle(void);
 int getpfs(struct hammer_ioc_pseudofs_rw *pfs, const char *path);
 void relpfs(int fd, struct hammer_ioc_pseudofs_rw *pfs);
 void hammer_check_restrict(const char *path);
+void hammer_softprune_scandir(struct softprune **basep,
+                         struct hammer_ioc_prune *template,
+                         const char *dirname);

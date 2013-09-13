@@ -3,9 +3,9 @@
 
 # require it to be specified
 SRCDIR ?= ${.CURDIR}/../..
-ROOTSIZE ?= 2048M
 PHYSMEM ?= 256m
 NCPUS ?= 2
+FSTYPE ?=
 
 all: help
 
@@ -32,6 +32,7 @@ help:
 	@echo ""
 	@echo "    setenv ROOTSIZE size (optional)"
 	@echo "    setenv VKDIR target_dir"
+	@echo "    setenv FSTYPE fstype (optional. values:hammer, 4.2BSD)"
 	@echo ""
 	@echo "Meta target components:"
 	@echo ""
@@ -75,6 +76,9 @@ world: checkq
 kernel: checkq
 	cd ${SRCDIR} && make -j 4 KERNCONF=${USEKERNEL} buildkernel
 
+nativekernel: checkq
+	cd ${SRCDIR} && make -j 4 KERNCONF=${USEKERNEL} nativekernel
+
 # Quick build - just rebuild the kernel quickly
 #
 #
@@ -82,7 +86,7 @@ quickworld: checkq
 	cd ${SRCDIR} && make -j 4 quickworld
 
 quickkernel: checkq
-	cd ${SRCDIR} && make KERNCONF=${USEKERNEL} quickkernel
+	cd ${SRCDIR} && make -j 4 KERNCONF=${USEKERNEL} quickkernel
 
 # Build and mount an empty filesystem for the emulated root disk
 #
@@ -96,17 +100,19 @@ root:	check
 	fdisk -IB `cat ${VKDIR}/vn.which`
 	disklabel -r -w `cat ${VKDIR}/vn.which`s1 auto
 	disklabel `cat ${VKDIR}/vn.which`s1 > ${VKDIR}/label.tmp
-	echo 'a: * 0 4.2BSD' >> ${VKDIR}/label.tmp
+	echo 'a: * 0 ${FSTYPE}' >> ${VKDIR}/label.tmp
 	disklabel -R `cat ${VKDIR}/vn.which`s1 ${VKDIR}/label.tmp
 	disklabel -B `cat ${VKDIR}/vn.which`s1
-	newfs /dev/`cat ${VKDIR}/vn.which`s1a
+	${NEWFS_CMD} ${NEWFS_ARGS} /dev/`cat ${VKDIR}/vn.which`s1a
 	mkdir -p ${VKDIR}/root
 	vnconfig -u `cat ${VKDIR}/vn.which` > /dev/null 2>&1
 
 mount: check
 	vnconfig -c -s labels `cat ${VKDIR}/vn.which` ${VKDIR}/root.img
-	fsck -p /dev/`cat ${VKDIR}/vn.which`s1a
-	mount /dev/`cat ${VKDIR}/vn.which`s1a ${VKDIR}/root
+.	if ${FSTYPE} == "4.2BSD"
+		fsck -p /dev/`cat ${VKDIR}/vn.which`s1a
+.	endif
+	${MOUNT_CMD} /dev/`cat ${VKDIR}/vn.which`s1a ${VKDIR}/root
 	@echo "Mounted ${VKDIR}/root"
 
 umount: check
@@ -126,13 +132,16 @@ install: mount
 	cd ${SRCDIR} && \
 	    make -j 4 \
 		 DESTDIR=${VKDIR}/root KERNCONF=${USEKERNEL} \
-		 NO_MODULES= \
 		 installkernel
 	cp ${VKDIR}/root/boot/kernel/kernel ${VKDIR}/vkernel
 
 leaf: mount
 	echo 'ifconfig_vke0="up"' > ${VKDIR}/root/etc/rc.conf
 	echo 'defaultrouter="10.26.0.1"' >> ${VKDIR}/root/etc/rc.conf
+	echo 'search dragonflybsd.org backplane.com' > ${VKDIR}/root/etc/resolv.conf
+	echo 'nameserver 10.0.0.25' >> ${VKDIR}/root/etc/resolv.conf
+	echo 'nameserver 10.0.0.2' >> ${VKDIR}/root/etc/resolv.conf
+	echo 'nameserver 8.8.8.8' >> ${VKDIR}/root/etc/resolv.conf
 
 # Quick reinstall - just install a new kernel on top of an existing image
 #
@@ -143,7 +152,7 @@ reinstall: mount
 reinstallkernel: mount
 	cd ${SRCDIR} && \
 	    make -j 4 DESTDIR=${VKDIR}/root KERNCONF=${USEKERNEL} \
-		 NO_MODULES= installkernel
+		 installkernel
 	cp ${VKDIR}/root/boot/kernel/kernel ${VKDIR}/vkernel
 
 sysloader: mount
@@ -181,11 +190,26 @@ checkq:
 .if !defined(VKDIR)
 	@(echo "must specify VKDIR=target or as an environment variable"; /usr/bin/false)
 .endif
+
 .if exists(${VKDIR})
 	@echo "${VKDIR} found"
 .else
 	mkdir -p ${VKDIR}
 .endif
+
+.if ${FSTYPE} == "hammer"
+NEWFS_CMD = newfs_${FSTYPE}
+NEWFS_ARGS = -L VKROOT -f
+MOUNT_CMD = mount_${FSTYPE}
+ROOTSIZE ?= 5G
+.else
+FSTYPE = 4.2BSD
+NEWFS_CMD = newfs
+NEWFS_ARGS =
+MOUNT_CMD = mount
+ROOTSIZE ?= 2G
+.endif
+
 
 check: checkq
 .if exists(${VKDIR}/vn.which)
