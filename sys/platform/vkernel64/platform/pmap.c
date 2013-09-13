@@ -385,7 +385,9 @@ create_dmap_vmm(vm_paddr_t *firstaddr)
 	int pml4_stack_index;
 	int pdp_stack_index;
 	int pd_stack_index;
-	int i;
+	long i,j;
+	int regs[4];
+	int amd_feature;
 
 	uint64_t KPDP_DMAP_phys = allocpages(firstaddr, NDMPML4E);
 	uint64_t KPDP_VSTACK_phys = allocpages(firstaddr, 1);
@@ -400,10 +402,31 @@ create_dmap_vmm(vm_paddr_t *firstaddr)
 	bzero(KPDP_VSTACK_virt, 1 * PAGE_SIZE);
 	bzero(KPD_VSTACK_virt, 1 * PAGE_SIZE);
 
-	for (i = 0; i < NPTEPG; i++) {
-		KPDP_DMAP_virt[i] = ((uint64_t)i << PDPSHIFT);
-		KPDP_DMAP_virt[i] |= VPTE_RW | VPTE_V | VPTE_PS | VPTE_U;
+	do_cpuid(0x80000001, regs);
+	amd_feature = regs[3];
+
+	if (amd_feature & AMDID_PAGE1GB) {
+		for (i = 0; i < NPDPEPG; i++) {
+			KPDP_DMAP_virt[i] = ((uint64_t)i << PDPSHIFT);
+			KPDP_DMAP_virt[i] |= VPTE_RW | VPTE_V | VPTE_PS | VPTE_U;
+		}
+	} else {
+		for (i = 0; i < NPDPEPG; i++) {
+			uint64_t KPD_DMAP_phys = allocpages(firstaddr, 1);
+			pd_entry_t *KPD_DMAP_virt = (pd_entry_t *)PHYS_TO_DMAP(KPD_DMAP_phys);
+
+			bzero(KPD_DMAP_virt, PAGE_SIZE);
+
+			KPDP_DMAP_virt[i] = KPD_DMAP_phys;
+			KPDP_DMAP_virt[i] |= VPTE_RW | VPTE_V | VPTE_U;
+
+			for (j = 0; j < NPTEPG; j++) {
+				KPD_DMAP_virt[j] = (i << PDPSHIFT) | (j << PDRSHIFT);
+				KPD_DMAP_virt[j] |= VPTE_RW | VPTE_V | VPTE_PS | VPTE_U;
+			}
+		}
 	}
+
 	/* DMAP for the first 512G */
 	KPML4virt[0] = KPDP_DMAP_phys;
 	KPML4virt[0] |= VPTE_RW | VPTE_V | VPTE_U;
@@ -442,7 +465,6 @@ create_pagetables(vm_paddr_t *firstaddr, int64_t ptov_offset)
          * Maxmem is in pages.
          */
         nkpt = (Maxmem * (sizeof(struct vm_page) * 2) + MSGBUF_SIZE) / NBPDR;
-
 	/*
 	 * Allocate pages
 	 */
@@ -507,7 +529,7 @@ pmap_bootstrap(vm_paddr_t *firstaddr, int64_t ptov_offset)
 {
 	vm_offset_t va;
 	pt_entry_t *pte;
-	vm_paddr_t firstaddr_old = *firstaddr;
+
 	/*
 	 * Create an initial set of page tables to run the kernel in.
 	 */
@@ -517,7 +539,7 @@ pmap_bootstrap(vm_paddr_t *firstaddr, int64_t ptov_offset)
 		create_dmap_vmm(firstaddr);
 	}
 
-	virtual_start = KvaStart + *firstaddr - firstaddr_old;
+	virtual_start = KvaStart;
 	virtual_end = KvaEnd;
 
 	/*
@@ -794,6 +816,7 @@ pmap_kenter_quick(vm_offset_t va, vm_paddr_t pa)
 
 	npte = (vpte_t)pa | VPTE_RW | VPTE_V | VPTE_U;
 	pte = vtopte(va);
+
 	if (*pte & VPTE_V)
 		pmap_inval_pte_quick(pte, &kernel_pmap, va);
 	*pte = npte;

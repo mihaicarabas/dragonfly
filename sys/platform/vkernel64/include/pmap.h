@@ -81,6 +81,7 @@
 #define	NUPDE		(NUPDPE*NPDEPG)	/* number of userland PD entries */
 
 #define	NDMPML4E	1		/* number of dmap PML4 slots */
+#define	NDMPDPE		NPTEPG		/* number of dmap PDPE slots */
 
 /*
  * The *PML4I values control the layout of virtual memory

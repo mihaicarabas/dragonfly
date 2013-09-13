@@ -623,6 +623,7 @@ init_kern_memory_vmm(void)
 	int i;
 	void *firstfree;
 	struct guest_options options;
+	void *dmap_address;
 
 	KvaStart = (vm_offset_t)KERNEL_KVA_START;
 	KvaSize = KERNEL_KVA_SIZE;
@@ -643,13 +644,13 @@ init_kern_memory_vmm(void)
 
 	
 	/* MAP_FILE? */
-	dmap_min_address = mmap(NULL, Maxmem_bytes, PROT_READ|PROT_WRITE|PROT_EXEC,
+	dmap_address = mmap(NULL, Maxmem_bytes, PROT_READ|PROT_WRITE|PROT_EXEC,
 	    MAP_ANON|MAP_SHARED, -1, 0);
-	if (dmap_min_address == MAP_FAILED) {
+	if (dmap_address == MAP_FAILED) {
 		err(1, "Unable to mmap() RAM region!");
 		/* NOT REACHED */
 	}
-	printf("VKERNEL begin at: %p, %p\n", (void*) dmap_min_address, (void*)Maxmem_bytes);
+
 	vkernel_stack = mmap(NULL, KERNEL_STACK_SIZE,
 	    PROT_READ|PROT_WRITE|PROT_EXEC,
 	    MAP_ANON, -1, 0);
@@ -660,8 +661,7 @@ init_kern_memory_vmm(void)
 	/*
 	 * Bootstrap the kernel_pmap
 	 */
-	firstfree = dmap_min_address;
-
+	firstfree = dmap_address;
 	dmap_min_address = NULL; /* VIRT == PHYS in the first 512G */
 	pmap_bootstrap((vm_paddr_t *)&firstfree, (uint64_t)KvaStart);
 
@@ -681,7 +681,7 @@ init_kern_memory_vmm(void)
 	 */
 	phys_avail[0] = (vm_paddr_t)firstfree;
 	phys_avail[0] = (phys_avail[0] + PAGE_MASK) & ~(vm_paddr_t)PAGE_MASK;
-	phys_avail[1] = (vm_paddr_t)firstfree + Maxmem_bytes;
+	phys_avail[1] = (vm_paddr_t)dmap_address + Maxmem_bytes;
 
 	/*
 	 * pmap_growkernel() will set the correct value.
