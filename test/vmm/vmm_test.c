@@ -6,6 +6,7 @@
 #include <sys/vkernel.h>
 
 #include <cpu/cpufunc.h>
+#include <cpu/specialreg.h>
 
 #include <stdlib.h>
 #include <stdio.h>
@@ -33,7 +34,9 @@ vmm_boostrap(void)
 	int pd_stack_index;
 	char tst[1024];
 	void *stack;
-	int i;
+	uint64_t i,j;
+	int regs[4];
+	int amd_feature;
 
 	stack = mmap(NULL, STACK_SIZE,
 	    PROT_READ|PROT_WRITE|PROT_EXEC,
@@ -44,18 +47,35 @@ vmm_boostrap(void)
 		return -1;
 	}
 
-	posix_memalign((void **) &ptr, PAGE_SIZE, 4 * PAGE_SIZE);
-	bzero(ptr, 4 * PAGE_SIZE);
+	posix_memalign((void **) &ptr, PAGE_SIZE, (512 + 4) * PAGE_SIZE);
+	bzero(ptr, (512 + 4) * PAGE_SIZE);
 
 	uint64_t *pml4 = ptr;
 	uint64_t *pdp = (uint64_t *)((uint64_t)ptr + PAGE_SIZE);
 	uint64_t *pdp_stack = (uint64_t *)((uint64_t)ptr + 2 * PAGE_SIZE);
 	uint64_t *pd_stack = (uint64_t *)((uint64_t)ptr + 3 * PAGE_SIZE);
+	uint64_t *pd_vec = (uint64_t *)((uint64_t)ptr + 4 * PAGE_SIZE);
 
 	pml4[0] = (uint64_t) pdp | VPTE_V | VPTE_RW| VPTE_U;
-	for (i = 0; i < VPTE_PAGE_ENTRIES; i++) {
-		pdp[i] = (uint64_t)i << 30;
-		pdp[i] |=  VPTE_V | VPTE_RW | VPTE_U | VPTE_PS;
+
+	do_cpuid(0x80000001, regs);
+	amd_feature = regs[3];
+
+	if (amd_feature & AMDID_PAGE1GB) {
+		for (i = 0; i < VPTE_PAGE_ENTRIES; i++) {
+			pdp[i] = i << 30;
+			pdp[i] |=  VPTE_V | VPTE_RW | VPTE_U;
+		}
+	} else {
+		for (i = 0; i < VPTE_PAGE_ENTRIES; i++) {
+			uint64_t *pd = &pd_vec[i * VPTE_PAGE_ENTRIES];
+			pdp[i] = (uint64_t) pd;
+			pdp[i] |=  VPTE_V | VPTE_RW | VPTE_U;
+			for (j = 0; j < VPTE_PAGE_ENTRIES; j++) {
+				pd[j] = (i << 30) | (j << 21);
+				pd[j] |=  VPTE_V | VPTE_RW | VPTE_U | VPTE_PS;
+			}
+		}
 	}
 
 	void *stack_addr = NULL;
@@ -75,7 +95,6 @@ vmm_boostrap(void)
 	options.new_stack = (uint64_t)stack + STACK_SIZE;
 	options.guest_cr3 = (register_t) pml4;
 	options.master = 1;
-
 	if(vmm_guest_ctl(VMM_GUEST_RUN, &options)) {
 		printf("Error: VMM enter failed\n");
 	}
