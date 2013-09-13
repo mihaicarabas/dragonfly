@@ -86,6 +86,7 @@ sys_vmm_guest_ctl(struct vmm_guest_ctl_args *uap)
 			goto out;
 	}
 out_exit:
+	curproc->p_vmm = NULL;
 	exit1(W_EXITCODE(error, 0));
 out:
 	return (error);

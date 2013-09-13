@@ -869,7 +869,6 @@ vmx_vmdestroy(void)
 			error = 0;
 		}
 		curthread->td_vmm = NULL;
-		curproc->p_vmm = NULL;
 	}
 	return error;
 }
