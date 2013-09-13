@@ -24,8 +24,8 @@ sys_vmm_guest_ctl(struct vmm_guest_ctl_args *uap)
 	int vmm_error = 0;
 	struct guest_options options;
 	struct trapframe *tf = uap->sysmsg_frame;
-	uint64_t stack_limit = USRSTACK;
-	uint8_t stack_page[PAGE_SIZE];
+	unsigned long stack_limit = USRSTACK;
+	unsigned char stack_page[PAGE_SIZE];
 
 	clear_quickret();
 
@@ -37,17 +37,17 @@ sys_vmm_guest_ctl(struct vmm_guest_ctl_args *uap)
 				goto out;
 			}
 
-			while(stack_limit > tf->tf_rsp) {
+			while(stack_limit > tf->tf_sp) {
 				stack_limit -= PAGE_SIZE;
 				options.new_stack -= PAGE_SIZE;
 
-				error = copyin((void *)stack_limit, (void *)stack_page, PAGE_SIZE);
+				error = copyin((const void *)stack_limit, (void *)stack_page, PAGE_SIZE);
 				if (error) {
 					kprintf("sys_vmm_guest: error copyin stack\n");
 					goto out;
 				}
 
-				error = copyout((void *)stack_page, (void *)options.new_stack, PAGE_SIZE);
+				error = copyout((const void *)stack_page, (void *)options.new_stack, PAGE_SIZE);
 				if (error) {
 					kprintf("sys_vmm_guest: error copyout stack\n");
 					goto out;
@@ -55,12 +55,6 @@ sys_vmm_guest_ctl(struct vmm_guest_ctl_args *uap)
 			}
 
 			bcopy(tf, &options.tf, sizeof(struct trapframe));
-
-			/* 
-			 * Be sure we return success if the VMM hook enters
-			 */
-			options.tf.tf_rax = 0;
-			options.tf.tf_rflags &= ~PSL_C;
 
 			error = vmm_vminit(&options);
 			if (error) {

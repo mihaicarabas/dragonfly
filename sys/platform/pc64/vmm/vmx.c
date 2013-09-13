@@ -709,6 +709,12 @@ vmx_vminit(struct guest_options *options)
 
 	bcopy(&options->tf, &vti->guest, sizeof(struct trapframe));
 
+	/* 
+	 * Be sure we return success if the VMM hook enters
+	 */
+	vti->guest.tf_rax = 0;
+	vti->guest.tf_rflags &= ~PSL_C;
+
 	vti->vmcs_region_na = kmalloc(vmx_region_size + VMXON_REGION_ALIGN_SIZE,
 		    M_TEMP,
 		    M_WAITOK | M_ZERO);
@@ -1077,7 +1083,7 @@ vmx_handle_vmexit(void)
 						if (copyin((const void *) vti->guest.tf_rip, instr, vti->vmexit_instruction_length) &&
 						    instr_check(&syscall_asm,(void *) instr, (uint8_t) vti->vmexit_instruction_length)) {
 							kprintf("VMM: handle_vmx_vmexit: UD different from syscall: ");
-							db_disasm((db_addr_t) instruction, FALSE, NULL);
+							db_disasm((db_addr_t) instr, FALSE, NULL);
 						}
 #endif
 						vti->guest.tf_err = 2;

@@ -76,6 +76,7 @@
 
 #include <sys/sysref2.h>
 #include <sys/spinlock2.h>
+#include <vm/vm_page2.h>
 
 #include <assert.h>
 
