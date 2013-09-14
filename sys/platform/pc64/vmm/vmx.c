@@ -386,16 +386,17 @@ vmx_init(void)
 		kprintf("VMM: vmx_ept_init failed\n");
 		return (ENODEV);
 	}
-//
-//	/* Enable VPID feature */
-//	err = vmx_set_ctl_setting(&vmx_procbased2,
-//	    PROCBASED2_ENABLE_VPID,
-//	    ONE);
-//	if (err) {
-//		kprintf("VMM: PROCBASED2_ENABLE_VPID not supported by this CPU\n");
-//		return (ENODEV);
-//	}
-
+#if 0
+	/* XXX - to implement in the feature */
+	/* Enable VPID feature */
+	err = vmx_set_ctl_setting(&vmx_procbased2,
+	    PROCBASED2_ENABLE_VPID,
+	    ONE);
+	if (err) {
+		kprintf("VMM: PROCBASED2_ENABLE_VPID not supported by this CPU\n");
+		return (ENODEV);
+	}
+#endif
 
 	/* Check for the feature control status */
 	feature_control = rdmsr(IA32_FEATURE_CONTROL);
@@ -562,6 +563,7 @@ vmx_disable(void)
 
 	return 0;
 }
+
 static int vmx_set_guest_descriptor(descriptor_t type,
 		uint16_t selector,
 		uint32_t rights,
@@ -654,6 +656,14 @@ error:
 	return err;
 }
 
+/*
+ * Called by the first thread of the VMM process
+ * - create a new vmspace
+ * - init the vmspace with EPT PG_* bits and
+ *   EPT copyin/copyout functions
+ * - replace the vmspace of the current proc
+ * - remove the old vmspace
+ */
 static int
 vmx_vminit_master(struct guest_options *options)
 {
@@ -776,6 +786,10 @@ vmx_vminit(struct guest_options *options)
 
 	/*
 	 * GUEST initialization
+	 * - set the descriptors according the conditions from Intel
+	 *   manual "26.3.1.2 Checks on Guest Segment Registers
+	 * - set the privilege to SEL_UPL (the vkernel will run
+	 *   in userspace context)
 	 */
 	ERROR_IF(vmx_set_guest_descriptor(ES, GSEL(GUDATA_SEL, SEL_UPL),
 	    VMCS_SEG_TYPE(3) | VMCS_S | VMCS_DPL(SEL_UPL) | VMCS_P,
@@ -807,19 +821,22 @@ vmx_vminit(struct guest_options *options)
 
 	ERROR_IF(vmx_set_guest_descriptor(LDTR, 0, VMCS_SEG_UNUSABLE, 0, 0));
 
-
+	/* Set the CR0/CR4 registers, removing the unsupported bits */
 	ERROR_IF(vmwrite(VMCS_GUEST_CR0, (CR0_PE | CR0_PG |
 	    cr0_fixed_to_1) & ~cr0_fixed_to_0));
 	ERROR_IF(vmwrite(VMCS_GUEST_CR4, (CR4_PAE | CR4_FXSR | CR4_XMM | CR4_XSAVE |
 	    cr4_fixed_to_1) & ~ cr4_fixed_to_0));
 
+	/* Don't set EFER_SCE for catching "syscall" instructions */
 	ERROR_IF(vmwrite(VMCS_GUEST_IA32_EFER, (EFER_LME | EFER_LMA)));
 
 	vti->guest.tf_rflags = PSL_I | 0x02;
 	ERROR_IF(vmwrite(VMCS_GUEST_RFLAGS, vti->guest.tf_rflags));
 
+	/* The Guest CR3 indicating CR3 pagetable */
 	ERROR_IF(vmwrite(VMCS_GUEST_CR3, (uint64_t) vti->guest_cr3));
 
+	/* Throw all possible exceptions */
 	ERROR_IF(vmwrite(VMCS_EXCEPTION_BITMAP,(uint64_t) 0xFFFFFFFF));
 
 	/* Guest RIP and RSP */
@@ -833,6 +850,7 @@ vmx_vminit(struct guest_options *options)
 	 */
 	ERROR_IF(vmwrite(VMCS_LINK_POINTER, ~0ULL));
 
+	/* The pointer to the EPT pagetable */
 	ERROR_IF(vmwrite(VMCS_EPTP, vmx_eptp(vti->vmm_cr3)));
 
 	vti->invept_desc.eptp = vmx_eptp(vti->vmm_cr3);
@@ -1075,10 +1093,14 @@ vmx_handle_vmexit(void)
 			if (exception_type == VMCS_EXCEPTION_HARDWARE) {
 				switch (exception_number) {
 					case IDT_UD:
+						/*
+						 * Disabled "syscall" instruction and
+						 * now we catch it for executing
+						 */
 						dkprintf("VMM: handle_vmx_vmexit: VMCS_EXCEPTION_HARDWARE IDT_UD\n");
 #ifdef VMM_DEBUG
-						uint8_t instr[INSTRUCTION_MAX_LENGTH];
 						/* Check to see if its syscall asm instuction */
+						uint8_t instr[INSTRUCTION_MAX_LENGTH];
 						if (copyin((const void *) vti->guest.tf_rip, instr, vti->vmexit_instruction_length) &&
 						    instr_check(&syscall_asm,(void *) instr, (uint8_t) vti->vmexit_instruction_length)) {
 							kprintf("VMM: handle_vmx_vmexit: UD different from syscall: ");
@@ -1115,6 +1137,16 @@ vmx_handle_vmexit(void)
 						vti->guest.tf_xflags = 0;
 						vti->guest.tf_trapno = T_PAGEFLT;
 
+						/* 
+						 * If we are a user process in the vkernel
+						 * pass the PF to the vkernel and will trigger
+						 * the user_trap()
+						 *
+						 * If we are the vkernel, send a SIGSEGV signal
+						 * to us that will trigger the execution of
+						 * kern_trap()
+						 *
+						 */
 
 						if (lp->lwp_vkernel && lp->lwp_vkernel->ve) {
 							vkernel_trap(lp, &vti->guest);
@@ -1144,8 +1176,12 @@ vmx_handle_vmexit(void)
 		case EXIT_REASON_CPUID:
 			dkprintf("VMM: handle_vmx_vmexit: EXIT_REASON_CPUID\n");
 
-			func = vti->guest.tf_rax;
+			/*
+			 * Execute CPUID instruction and pass
+			 * the result to the vkernel
+			 */
 
+			func = vti->guest.tf_rax;
 			do_cpuid(func, regs);
 
 			vti->guest.tf_rax = regs[0];
@@ -1157,6 +1193,12 @@ vmx_handle_vmexit(void)
 
 			break;
 		case EXIT_REASON_EPT_FAULT:
+			/*
+			 * EPT_FAULT are resolved like normal PFs. Nothing special
+			 * - get the fault type
+			 * - get the fault address (which is a GPA)
+			 * - execute vm_fault on the vm_map
+			 */
 			fault_type = vmx_ept_fault_type(vti->vmexit_qualification);
 
 			dkprintf("VMM: handle_vmx_vmexit: EXIT_REASON_EPT_FAULT with qualification %lld,"
@@ -1211,6 +1253,11 @@ restart:
 	ERROR2_IF(vmx_check_cpu_migration());
 	ERROR2_IF(vmx_handle_cpu_migration());
 
+	/* Make the state safe to VMENTER
+	 * - disable interrupts and check if there were any pending
+	 * - check for ASTFLTs
+	 * - loop again until there are no ASTFLTs
+	 */
 	cpu_disable_intr();
 	splz();
 	if (gd->gd_reqflags & RQF_AST_MASK) {
@@ -1257,6 +1304,18 @@ restart:
 	 */
 	ERROR_IF(vmwrite(VMCS_HOST_FS_BASE, mdcpu->gd_user_fs));
 
+	/*
+	 * EPT mappings can't be invalidated with normal invlpg/invltlb
+	 * instructions. We have to execute a special instruction that
+	 * invalidates all EPT cache ("invept").
+	 *
+	 * pm_invgen it's a generation number which is incremented in the
+	 * pmap_inval_interlock, before doing any invalidates. The
+	 * pmap_inval_interlock will cause all the CPUs that are using
+	 * the EPT to VMEXIT and wait for the interlock to complete.
+	 * When they will VMENTER they will see that the generation
+	 * number had changed from their current and do a invept.
+	 */
 	if (vti->eptgen != td->td_proc->p_vmspace->vm_pmap.pm_invgen) {
 		vti->eptgen = td->td_proc->p_vmspace->vm_pmap.pm_invgen;
 
@@ -1264,11 +1323,11 @@ restart:
 		    (uint64_t*)&vti->invept_desc));
 	}
 
-	if (vti->launched) { /* vmresume */
+	if (vti->launched) { /* vmresume called from vmx_trap.s */
 		dkprintf("\n\nVMM: vmx_vmrun: vmx_resume\n");
 		ret = vmx_resume(vti);
 
-	} else { /* vmlaunch */
+	} else { /* vmlaunch called from vmx_trap.s */
 		dkprintf("\n\nVMM: vmx_vmrun: vmx_launch\n");
 		vti->launched = 1;
 		ret = vmx_launch(vti);
@@ -1277,6 +1336,16 @@ restart:
 	trap_handle_userenter(td);
 	sticks = td->td_sticks;
 
+	/*
+	 * This is our return point from the vmlaunch/vmresume
+	 * There are two situations:
+	 * - the vmlaunch/vmresume executed successfully and they
+	 *   would return through "vmx_vmexit" which will restore
+	 *   the state (registers) and return here with the ret
+	 *   set to VM_EXIT (ret is actually %rax)
+	 * - the vmlaunch/vmresume failed to execute and will return
+	 *   immediately with ret set to the error code
+	 */
 	if (ret == VM_EXIT) {
 
 		ERROR_IF(vmx_vmexit_loadinfo());
@@ -1284,6 +1353,11 @@ restart:
 		cpu_enable_intr();
 		crit_exit();
 
+		/*
+		 * Handle the VMEXIT reason
+		 * - if successful we VMENTER again
+		 * - if not, we exit
+		 */
 		if (vmx_handle_vmexit())
 			goto done;
 
@@ -1293,6 +1367,13 @@ restart:
 	} else {
 		vti->launched = 0;
 
+		/*
+		 * Two types of error:
+		 * - VM_FAIL_VALID - the host state was ok,
+		 *   but probably the guest state was not
+		 * - VM_FAIL_INVALID - the parameters or the host state
+		 *   was not ok
+		 */
 		if (ret == VM_FAIL_VALID) {
 			vmread(VMCS_INSTR_ERR, &val);
 			err = (int) val;
@@ -1308,12 +1389,17 @@ done:
 error:
 	cpu_enable_intr();
 error2:
+	trap_handle_userenter(td);
 	td->td_lwp->lwp_md.md_regs = save_frame;
 	crit_exit();
 	kprintf("VMM: vmx_vmrun failed\n");
 	return err;
 }
 
+/*
+ * Called when returning to user-space
+ * after executing lwp_fork.
+ */
 static void
 vmx_lwp_return(struct lwp *lp, struct trapframe *frame)
 {
@@ -1345,6 +1431,7 @@ vmx_lwp_return(struct lwp *lp, struct trapframe *frame)
 	lwkt_reltoken(&lp->lwp_proc->p_token);
 	exit1(W_EXITCODE(vmrun_err, 0));
 }
+
 static void
 vmx_set_guest_cr3(register_t guest_cr3)
 {

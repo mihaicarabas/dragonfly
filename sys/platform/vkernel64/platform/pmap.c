@@ -405,12 +405,15 @@ create_dmap_vmm(vm_paddr_t *firstaddr)
 	do_cpuid(0x80000001, regs);
 	amd_feature = regs[3];
 
+	/* Build the mappings for the first 512GB */
 	if (amd_feature & AMDID_PAGE1GB) {
+		/* In pages of 1 GB, if supported */
 		for (i = 0; i < NPDPEPG; i++) {
 			KPDP_DMAP_virt[i] = ((uint64_t)i << PDPSHIFT);
 			KPDP_DMAP_virt[i] |= VPTE_RW | VPTE_V | VPTE_PS | VPTE_U;
 		}
 	} else {
+		/* In page of 2MB, otherwise */
 		for (i = 0; i < NPDPEPG; i++) {
 			uint64_t KPD_DMAP_phys = allocpages(firstaddr, 1);
 			pd_entry_t *KPD_DMAP_virt = (pd_entry_t *)PHYS_TO_DMAP(KPD_DMAP_phys);
@@ -420,6 +423,7 @@ create_dmap_vmm(vm_paddr_t *firstaddr)
 			KPDP_DMAP_virt[i] = KPD_DMAP_phys;
 			KPDP_DMAP_virt[i] |= VPTE_RW | VPTE_V | VPTE_U;
 
+			/* For each PD, we have to allocate NPTEPG PT */
 			for (j = 0; j < NPTEPG; j++) {
 				KPD_DMAP_virt[j] = (i << PDPSHIFT) | (j << PDRSHIFT);
 				KPD_DMAP_virt[j] |= VPTE_RW | VPTE_V | VPTE_PS | VPTE_U;
@@ -535,6 +539,7 @@ pmap_bootstrap(vm_paddr_t *firstaddr, int64_t ptov_offset)
 	 */
 	create_pagetables(firstaddr, ptov_offset);
 
+	/* Create the DMAP for the VMM */
 	if(vmm_enabled) {
 		create_dmap_vmm(firstaddr);
 	}
@@ -1701,6 +1706,10 @@ cpu_vmspace_alloc(struct vmspace *vm)
 	void *rp;
 	vpte_t vpte;
 
+	/*
+	 * If VMM enable, don't do nothing, we
+	 * are able to use real page tables
+	 */
 	if (vmm_enabled)
 		return;
 
@@ -1727,8 +1736,13 @@ cpu_vmspace_alloc(struct vmspace *vm)
 void
 cpu_vmspace_free(struct vmspace *vm)
 {
+	/*
+	 * If VMM enable, don't do nothing, we
+	 * are able to use real page tables
+	 */
 	if (vmm_enabled)
 		return;
+
 	if (vmspace_destroy(&vm->vm_pmap) < 0)
 		panic("vmspace_destroy() failed");
 }

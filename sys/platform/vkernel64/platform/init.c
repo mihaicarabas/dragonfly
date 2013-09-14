@@ -654,11 +654,18 @@ init_kern_memory_vmm(void)
 		/* NOT REACHED */
 	}
 
+	/* Call the vmspace_create to allocate the internal
+	 * vkernel structures. Won't do anything else (no new
+	 * vmspace)
+	 */
 	if (vmspace_create(NULL, 0, NULL) < 0)
 		panic("vmspace_create() failed");
 
 	
-	/* MAP_FILE? */
+	/* 
+	 * MAP_ANON the region of the VKERNEL phyisical memory
+	 * (known as GPA - Guest Physical Address
+	 */
 	dmap_address = mmap(NULL, Maxmem_bytes, PROT_READ|PROT_WRITE|PROT_EXEC,
 	    MAP_ANON|MAP_SHARED, -1, 0);
 	if (dmap_address == MAP_FAILED) {
@@ -666,6 +673,7 @@ init_kern_memory_vmm(void)
 		/* NOT REACHED */
 	}
 
+	/* Alloc a new stack in the lowmem */
 	vkernel_stack = mmap(NULL, KERNEL_STACK_SIZE,
 	    PROT_READ|PROT_WRITE|PROT_EXEC,
 	    MAP_ANON, -1, 0);

@@ -54,6 +54,11 @@
 .text
 
 /*
+ * Called by the HW VMM when doing a VMEXIT.
+ * - restore the host context
+ * - return to handle_vmx_vmexit() with
+ *   ret=VM_EXIT, in vmx.c
+ *
  * void vmx_exit(void)
  * %rsp = vmx_thread_info
  */
@@ -77,6 +82,14 @@ ENTRY(vmx_vmexit)
 END(vmx_vmexit)
 
 /*
+ * Called first time when entering the VMM
+ * - executing "vmlaunch" with success, doesn't
+ *   return here. Starts execution from the RIP
+ *   pointed in by VMCS_GUEST_CR3
+ * - not executing "vmlaunch" with success, it
+ *   returns immediately with the appropiate
+ *   error code
+ *
  * int vmx_launch(struct vmx_thread_info* vti)
  * %rdi = cti
  */
@@ -111,6 +124,15 @@ ENTRY(vmx_launch)
 END(vmx_launch)
 
 /*
+ * Called every time when entering the VMM, but only
+ * after vmlaunch was executed before it
+ * - executing "vmresume" with success, doesn't
+ *   return here. Starts execution from the RIP
+ *   pointed in by VMCS_GUEST_CR3
+ * - not executing "vmresume" with success, it
+ *   returns immediately with the appropiate
+ *   error code
+ *
  * int vmx_resume(struct vmx_thread_info* vti)
  * %rdi = cti
  */

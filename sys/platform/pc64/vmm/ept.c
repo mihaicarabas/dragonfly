@@ -48,6 +48,11 @@ vmx_ept_init(void)
 		pmap_pm_flags_ept = PMAP_EMULATE_AD_BITS;
 	}
 
+	/* Initialize EPT bits
+	 * - for PG_V - set READ and EXECUTE to preserve compatibility
+	 * - for PG_U and PG_G - set 0 to preserve compatiblity
+	 * - for PG_N - set the Uncacheable bit
+	 */
 	pmap_bits_ept[TYPE_IDX] = EPT_PMAP;
 	pmap_bits_ept[PG_V_IDX] = EPT_PG_READ | EPT_PG_EXECUTE;
 	pmap_bits_ept[PG_RW_IDX] = EPT_PG_WRITE;
@@ -92,11 +97,16 @@ vmx_ept_init(void)
 	return 0;
 }
 
+/* Build the VMCS_EPTP pointer
+ * - the ept_address
+ * - the EPTP bits indicating optional features
+ */
 uint64_t vmx_eptp(uint64_t ept_address)
 {
 	return (ept_address | eptp_bits);
 }
 
+/* Copyin from guest VMM */
 static int
 ept_copyin(const void *udaddr, void *kaddr, size_t len)
 {
@@ -111,6 +121,7 @@ ept_copyin(const void *udaddr, void *kaddr, size_t len)
 	register_t guest_cr3 = vti->guest_cr3;
 
 	while (len) {
+		/* Get the GPA by manually walking the-GUEST page table*/
 		err = guest_phys_addr(vm, &gpa, guest_cr3, (vm_offset_t)udaddr);
 		if (err) {
 			kprintf("%s: could not get guest_phys_addr\n", __func__);
@@ -142,6 +153,7 @@ ept_copyin(const void *udaddr, void *kaddr, size_t len)
 	return (err);
 }
 
+/* Copyout from guest VMM */
 static int
 ept_copyout(const void *kaddr, void *udaddr, size_t len)
 {
@@ -156,6 +168,7 @@ ept_copyout(const void *kaddr, void *udaddr, size_t len)
 	register_t guest_cr3 = vti->guest_cr3;
 
 	while (len) {
+		/* Get the GPA by manually walking the-GUEST page table*/
 		err = guest_phys_addr(vm, &gpa, guest_cr3, (vm_offset_t)udaddr);
 		if (err) {
 			kprintf("%s: could not get guest_phys_addr\n", __func__);

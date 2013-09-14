@@ -200,6 +200,7 @@ sys_vmspace_ctl(struct vmspace_ctl_args *uap)
 	get_mplock();
 	lwkt_gettoken(&vkp->token);
 
+	/* If it's not a VMM thread don't bother looking for it's vmspace */
 	if (curthread->td_vmm == NULL)
 		if ((ve = vkernel_find_vmspace(vkp, uap->id)) == NULL) {
 			error = ENOENT;
@@ -215,6 +216,7 @@ sys_vmspace_ctl(struct vmspace_ctl_args *uap)
 		 */
 		if (curthread->td_vmm == NULL)
 			atomic_add_int(&ve->refs, 1);
+
 		framesz = sizeof(struct trapframe);
 		if ((vklp = lp->lwp_vkernel) == NULL) {
 			vklp = kmalloc(sizeof(*vklp), M_VKERNEL,
@@ -245,6 +247,10 @@ sys_vmspace_ctl(struct vmspace_ctl_args *uap)
 			if (curthread->td_vmm == NULL)
 				atomic_subtract_int(&ve->refs, 1);
 		} else {
+			/* If it's a VMM thread just set the CR3. We also set the
+			 * vklp->ve to a key to be able to distinguish when a
+			 * vkernel user process runs and when not (when it's NULL
+			 */
 			if (curthread->td_vmm == NULL) {
 				vklp->ve = ve;
 				pmap_setlwpvm(lp, ve->vmspace);
@@ -710,6 +716,8 @@ vkernel_trap(struct lwp *lp, struct trapframe *frame)
 	 */
 	vklp = lp->lwp_vkernel;
 	KKASSERT(vklp);
+
+	/* If it's a VMM thread just set the vkernel CR3 back */
 	if (curthread->td_vmm == NULL) {
 		ve = vklp->ve;
 		KKASSERT(ve != NULL);
