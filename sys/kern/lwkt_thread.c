@@ -71,6 +71,10 @@
 #include <machine/stdarg.h>
 #include <machine/smp.h>
 
+#ifdef _KERNEL_VIRTUAL
+#include <pthread.h>
+#endif
+
 #if !defined(KTR_CTXSW)
 #define KTR_CTXSW KTR_ALL
 #endif
@@ -150,8 +154,10 @@ static int lwkt_cache_threads = 0;
 SYSCTL_INT(_lwkt, OID_AUTO, cache_threads, CTLFLAG_RD,
 	&lwkt_cache_threads, 0, "thread+kstack cache");
 
+#ifndef _KERNEL_VIRTUAL
 static __cachealign int lwkt_cseq_rindex;
 static __cachealign int lwkt_cseq_windex;
+#endif
 
 /*
  * These helper procedures handle the runq, they can only be called from
@@ -750,6 +756,9 @@ skip:
 	 * are contested.
 	 */
 	cpu_pause();
+#ifdef _KERNEL_VIRTUAL
+	pthread_yield();
+#endif
 	ntd = &gd->gd_idlethread;
 	if (gd->gd_trap_nesting_level == 0 && panicstr == NULL)
 	    ASSERT_NO_TOKENS_HELD(ntd);
@@ -783,6 +792,7 @@ skip:
 	if (spinning < 0x7FFFFFFF)
 	    ++spinning;
 
+#ifndef _KERNEL_VIRTUAL
 	/*
 	 * lwkt_getalltokens() failed in sorted token mode, we can use
 	 * monitor/mwait in this case.
@@ -796,6 +806,7 @@ skip:
 			      ~RQF_IDLECHECK_WK_MASK,
 			      cpu_mwait_spin);
 	}
+#endif
 
 	/*
 	 * We already checked that td is still scheduled so this should be
@@ -803,6 +814,7 @@ skip:
 	 */
 	splz_check();
 
+#ifndef _KERNEL_VIRTUAL
 	/*
 	 * This experimental resequencer is used as a fall-back to reduce
 	 * hw cache line contention by placing each core's scheduler into a
@@ -838,6 +850,7 @@ skip:
 	    DELAY(1);
 	    atomic_add_int(&lwkt_cseq_rindex, 1);
 	}
+#endif
 	/* highest level for(;;) loop */
     }
 
