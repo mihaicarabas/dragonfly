@@ -56,7 +56,7 @@
 #include <sys/proc.h>
 #include <sys/vmmeter.h>
 #include <sys/thread2.h>
-
+#include <sys/cdefs.h>
 #include <sys/mman.h>
 #include <sys/vmspace.h>
 #include <sys/vmm.h>
@@ -119,7 +119,7 @@ pmap_inval_pte(volatile vpte_t *ptep, struct pmap *pmap, vm_offset_t va)
 {
 	vpte_t pte = 0;
 	if (vmm_enabled) {
-		vmm_guest_sync_addr((long)ptep, (long)&pte);
+		vmm_guest_sync_addr(__DEVOLATILE(long *, ptep), (long *)&pte);
 	} else {
 		*ptep = 0;
 		pmap_inval_cpu(pmap, va, PAGE_SIZE);
@@ -151,7 +151,7 @@ pmap_inval_pde(volatile vpte_t *ptep, struct pmap *pmap, vm_offset_t va)
 	vpte_t pte = 0;
 
 	if (vmm_enabled) {
-		vmm_guest_sync_addr((long)ptep, (long)&pte);
+		vmm_guest_sync_addr(__DEVOLATILE(long *,ptep), (long *)&pte);
 	} else {
 		*ptep = 0;
 		pmap_inval_cpu(pmap, va, SEG_SIZE);
@@ -186,7 +186,7 @@ pmap_clean_pte(volatile vpte_t *ptep, struct pmap *pmap, vm_offset_t va)
 	if (pte & VPTE_V) {
 		atomic_clear_long(ptep, VPTE_RW);
 		if (vmm_enabled) {
-			vmm_guest_sync_addr((long)&pte, (long)ptep);
+			vmm_guest_sync_addr((long *)&pte, __DEVOLATILE(long *, ptep));
 		} else {
 			pmap_inval_cpu(pmap, va, PAGE_SIZE);
 			pte = *ptep;
@@ -205,7 +205,7 @@ pmap_clean_pde(volatile vpte_t *ptep, struct pmap *pmap, vm_offset_t va)
 	if (pte & VPTE_V) {
 		atomic_clear_long(ptep, VPTE_RW);
 		if (vmm_enabled) {
-			vmm_guest_sync_addr((long)&pte, (long)ptep);
+			vmm_guest_sync_addr((long *)&pte, __DEVOLATILE(long *, ptep));
 		} else {
 
 			pmap_inval_cpu(pmap, va, SEG_SIZE);
@@ -233,7 +233,7 @@ pmap_setro_pte(volatile vpte_t *ptep, struct pmap *pmap, vm_offset_t va)
 		pte = *ptep;
 		atomic_clear_long(ptep, VPTE_RW);
 		if (vmm_enabled) {
-			vmm_guest_sync_addr((long)&npte, (long)ptep);
+			vmm_guest_sync_addr((long *)&npte, __DEVOLATILE(long *, ptep));
 			pte |= npte & VPTE_M;
 		} else {
 			pmap_inval_cpu(pmap, va, PAGE_SIZE);
@@ -261,7 +261,7 @@ pmap_inval_loadandclear(volatile vpte_t *ptep, struct pmap *pmap,
 		pte = *ptep;
 		atomic_clear_long(ptep, VPTE_RW);
 		if (vmm_enabled) {
-			vmm_guest_sync_addr((long)&npte, (long)ptep);
+			vmm_guest_sync_addr((long *)&npte, __DEVOLATILE(long *, ptep));
 			pte |= npte & (VPTE_A | VPTE_M);
 		} else {
 			pmap_inval_cpu(pmap, va, PAGE_SIZE);

@@ -122,8 +122,8 @@ sys_vmm_guest_sync_addr(struct vmm_guest_sync_addr_args *uap)
 	lwkt_cpusync_init(&pir_cpusync, oactive, NULL, NULL);
 	lwkt_cpusync_interlock(&pir_cpusync);
 
-	copyin((void *)uap->srcaddr, &val, sizeof(long));
-	copyout(&val, (void *)uap->dstaddr, sizeof(long));
+	copyin(uap->srcaddr, &val, sizeof(long));
+	copyout(&val, uap->dstaddr, sizeof(long));
 
 	atomic_clear_cpumask(&p->p_vmm_cpumask, CPUMASK_LOCK);
 	lwkt_cpusync_deinterlock(&pir_cpusync);

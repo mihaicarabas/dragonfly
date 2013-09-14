@@ -2292,8 +2292,8 @@ struct	vmm_guest_sync_addr_args {
 #ifdef _KERNEL
 	struct sysmsg sysmsg;
 #endif
-	long	dstaddr;	char dstaddr_[PAD_(long)];
-	long	srcaddr;	char srcaddr_[PAD_(long)];
+	long *	dstaddr;	char dstaddr_[PAD_(long *)];
+	long *	srcaddr;	char srcaddr_[PAD_(long *)];
 };
 
 #ifdef COMPAT_43

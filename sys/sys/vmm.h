@@ -23,6 +23,6 @@ struct guest_options {
 
 int	vmm_guest_ctl (int, struct guest_options *);
 
-int	vmm_guest_sync_addr (long, long);
+int	vmm_guest_sync_addr (long *, long *);
 
 #endif	/* !_SYS_VMM_GUEST_CTL_H_ */
