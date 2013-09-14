@@ -1085,6 +1085,12 @@ vmx_handle_vmexit(void)
 							db_disasm((db_addr_t) instr, FALSE, NULL);
 						}
 #endif
+						/* Called to force a VMEXIT and invalidate TLB */
+						if (vti->guest.tf_rax == -1) {
+							vti->guest.tf_rip += vti->vmexit_instruction_length;
+							break;
+						}
+
 						vti->guest.tf_err = 2;
 						vti->guest.tf_trapno = T_FAST_SYSCALL;
 						vti->guest.tf_xflags = 0;

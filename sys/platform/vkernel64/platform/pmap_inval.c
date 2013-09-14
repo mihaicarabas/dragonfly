@@ -76,6 +76,17 @@
 
 extern int vmm_enabled;
 
+static __inline
+void
+vmm_cpu_invltlb(void)
+{
+	uint64_t rax = -1;
+	__asm __volatile("syscall;"
+			:
+			: "a" (rax)
+			:);
+}
+
 /*
  * Invalidate va in the TLB on the current cpu
  */
@@ -84,7 +95,7 @@ void
 pmap_inval_cpu(struct pmap *pmap, vm_offset_t va, size_t bytes)
 {
 	if (vmm_enabled) {
-		getuid(); /* For VMM mode forces vmmexit/resume */
+		vmm_cpu_invltlb(); /* For VMM mode forces vmmexit/resume */
 	} else if (pmap == &kernel_pmap) {
 		madvise((void *)va, bytes, MADV_INVAL);
 	} else {
@@ -384,7 +395,7 @@ void
 cpu_invlpg(void *addr)
 {
 	if (vmm_enabled)
-		getuid(); /* For VMM mode forces vmmexit/resume */
+		vmm_cpu_invltlb(); /* For VMM mode forces vmmexit/resume */
 	else
 		madvise(addr, PAGE_SIZE, MADV_INVAL);
 }
@@ -393,7 +404,7 @@ void
 cpu_invltlb(void)
 {
 	if (vmm_enabled)
-		getuid(); /* For VMM mode forces vmmexit/resume */
+		vmm_cpu_invltlb(); /* For VMM mode forces vmmexit/resume */
 	else
 		madvise((void *)KvaStart, KvaEnd - KvaStart, MADV_INVAL);
 }
