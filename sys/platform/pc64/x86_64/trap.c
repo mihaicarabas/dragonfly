@@ -96,7 +96,6 @@
 	}
 
 extern void trap(struct trapframe *frame);
-extern void vkernel_pagefault(struct trapframe *frame);
 
 static int trap_pfault(struct trapframe *, int);
 static void trap_fatal(struct trapframe *, vm_offset_t);
@@ -801,6 +800,23 @@ out2:	;
 #endif
 }
 
+void
+trap_handle_userenter(struct thread *td)
+{
+	userenter(td, td->td_proc);
+}
+
+void
+trap_handle_userexit(struct trapframe *frame, int sticks)
+{
+	struct lwp *lp = curthread->td_lwp;
+
+	if (lp) {
+		userret(lp, frame, sticks);
+		userexit(lp);
+	}
+}
+
 static int
 trap_pfault(struct trapframe *frame, int usermode)
 {
@@ -1417,33 +1433,4 @@ cpu_vkernel_trap(struct trapframe *frame, int error)
 		frame->tf_rflags |= PSL_C;
 	else
 		frame->tf_rflags &= ~PSL_C;
-}
-
-void
-vkernel_pagefault(struct trapframe *frame)
-{
-	struct thread *td = curthread;
-	struct proc *p = td->td_proc;
-	struct lwp *lp = td->td_lwp;
-	int sticks;
-	int have_mplock = 0;
-
-
-	userenter(td, p);	/* lazy raise our priority */
-	sticks = (int)td->td_sticks;
-	KASSERT(lp->lwp_md.md_regs == frame,
-		("Frame mismatch %p %p", lp->lwp_md.md_regs, frame));
-
-	if (lp->lwp_vkernel && lp->lwp_vkernel->ve) {
-		vkernel_trap(lp, frame);
-	} else {
-		MAKEMPSAFE(have_mplock);
-		trapsignal(lp, SIGSEGV, SEGV_MAPERR);
-	}
-
-	userret(lp, frame, sticks);
-	userexit(lp);
-
-	if (have_mplock)
-		rel_mplock();
 }

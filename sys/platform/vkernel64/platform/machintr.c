@@ -201,15 +201,3 @@ cpu_unmask_all_signals(void)
 {
 	sigsetmask(0);
 }
-
-void
-cpu_invlpg(void *addr)
-{
-	madvise(addr, PAGE_SIZE, MADV_INVAL);
-}
-
-void
-cpu_invltlb(void)
-{
-	madvise((void *)KvaStart, KvaEnd - KvaStart, MADV_INVAL);
-}

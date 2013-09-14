@@ -72,17 +72,24 @@
 #include <machine/pmap.h>
 #include <machine/pmap_inval.h>
 
+#include <unistd.h>
+
 extern int vmm_enabled;
 
+/*
+ * Invalidate va in the TLB on the current cpu
+ */
 static __inline
 void
 pmap_inval_cpu(struct pmap *pmap, vm_offset_t va, size_t bytes)
 {
-    if (pmap == &kernel_pmap) {
-	madvise((void *)va, bytes, MADV_INVAL);
-    } else {
-	vmspace_mcontrol(pmap, (void *)va, bytes, MADV_INVAL, 0);
-    }
+	if (vmm_enabled) {
+		getuid(); /* For VMM mode forces vmmexit/resume */
+	} else if (pmap == &kernel_pmap) {
+		madvise((void *)va, bytes, MADV_INVAL);
+	} else {
+		vmspace_mcontrol(pmap, (void *)va, bytes, MADV_INVAL, 0);
+	}
 }
 
 /*
@@ -109,7 +116,6 @@ pmap_inval_pte(volatile vpte_t *ptep, struct pmap *pmap, vm_offset_t va)
 	} else {
 		*ptep = 0;
 		pmap_inval_cpu(pmap, va, PAGE_SIZE);
-		*ptep = 0;
 	}
 }
 
@@ -122,7 +128,6 @@ pmap_inval_pte_quick(volatile vpte_t *ptep, struct pmap *pmap, vm_offset_t va)
 {
 	*ptep = 0;
 	pmap_inval_cpu(pmap, va, PAGE_SIZE);
-	*ptep = 0;
 }
 
 /*
@@ -143,7 +148,6 @@ pmap_inval_pde(volatile vpte_t *ptep, struct pmap *pmap, vm_offset_t va)
 	} else {
 		*ptep = 0;
 		pmap_inval_cpu(pmap, va, SEG_SIZE);
-		*ptep = 0;
 	}
 }
 
@@ -338,21 +342,21 @@ pmap_inval_invltlb(pmap_inval_info_t info)
 void
 pmap_inval_deinterlock(pmap_inval_info_t info, pmap_t pmap)
 {
-    KKASSERT(info->pir_flags & PIRF_CPUSYNC);
-    atomic_clear_cpumask(&pmap->pm_active, CPUMASK_LOCK);
-    lwkt_cpusync_deinterlock(&info->pir_cpusync);
-    info->pir_flags = 0;
+	KKASSERT(info->pir_flags & PIRF_CPUSYNC);
+	atomic_clear_cpumask(&pmap->pm_active, CPUMASK_LOCK);
+	lwkt_cpusync_deinterlock(&info->pir_cpusync);
+	info->pir_flags = 0;
 }
 
 static void
 pmap_inval_callback(void *arg)
 {
-    pmap_inval_info_t info = arg;
+	pmap_inval_info_t info = arg;
 
-    if (info->pir_va == (vm_offset_t)-1)
-	cpu_invltlb();
-    else
-	cpu_invlpg((void *)info->pir_va);
+	if (info->pir_va == (vm_offset_t)-1)
+		cpu_invltlb();
+	else
+		cpu_invlpg((void *)info->pir_va);
 }
 
 void
@@ -362,4 +366,42 @@ pmap_inval_done(pmap_inval_info_t info)
     crit_exit_id("inval");
 }
 
+/*
+ * Synchronize a kvm mapping originally made for the private use on
+ * some other cpu so it can be used on all cpus.
+ *
+ * XXX add MADV_RESYNC to improve performance.
+ *
+ * We don't need to do anything because our pmap_inval_pte_quick()
+ * synchronizes it immediately.
+ */
+void
+pmap_kenter_sync(vm_offset_t va __unused)
+{
+}
 
+void
+cpu_invlpg(void *addr)
+{
+	if (vmm_enabled)
+		getuid(); /* For VMM mode forces vmmexit/resume */
+	else
+		madvise(addr, PAGE_SIZE, MADV_INVAL);
+}
+
+void
+cpu_invltlb(void)
+{
+	if (vmm_enabled)
+		getuid(); /* For VMM mode forces vmmexit/resume */
+	else
+		madvise((void *)KvaStart, KvaEnd - KvaStart, MADV_INVAL);
+}
+
+void
+smp_invltlb(void)
+{
+	/* XXX must invalidate the tlb on all cpus */
+	/* at the moment pmap_inval_pte_quick */
+	/* do nothing */
+}

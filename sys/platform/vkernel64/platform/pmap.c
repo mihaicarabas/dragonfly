@@ -824,18 +824,6 @@ pmap_kenter_quick(vm_offset_t va, vm_paddr_t pa)
 
 /*
  * Synchronize a kvm mapping originally made for the private use on
- * some other cpu so it can be used on all cpus.
- *
- * XXX add MADV_RESYNC to improve performance.
- */
-void
-pmap_kenter_sync(vm_offset_t va)
-{
-	madvise((void *)va, PAGE_SIZE, MADV_INVAL);
-}
-
-/*
- * Synchronize a kvm mapping originally made for the private use on
  * some other cpu so it can be used on our cpu.  Turns out to be the
  * same madvise() call, because we have to sync the real pmaps anyway.
  *

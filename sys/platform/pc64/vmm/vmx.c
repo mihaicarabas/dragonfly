@@ -10,6 +10,7 @@
 #include <sys/syscall.h>
 #include <sys/wait.h>
 #include <sys/vkernel.h>
+#include <sys/mplock2.h>
 #include <ddb/ddb.h>
 
 #include <cpu/cpu.h>
@@ -20,6 +21,7 @@
 #include <machine/globaldata.h>
 #include <machine/trap.h>
 #include <machine/pmap.h>
+#include <machine/md_var.h>
 
 #include <vm/vm_map.h>
 #include <vm/vm_extern.h>
@@ -35,8 +37,6 @@
 #include "ept.h"
 
 extern void trap(struct trapframe *frame);
-extern void syscall2(struct trapframe *frame);
-extern void vkernel_pagefault(struct trapframe *frame);
 
 static int vmx_check_cpu_migration(void);
 static int execute_vmptrld(struct vmx_thread_info *vti);
@@ -1041,11 +1041,11 @@ vmx_handle_vmexit(void)
 	int exit_reason;
 	int exception_type;
 	int exception_number;
-	struct trapframe *tf_old;
 	int err;
 	int func, regs[4];
 	int fault_type, gpa_prot, rv;
 	struct lwp *lp = curthread->td_lwp;
+
 	dkprintf("VMM: handle_vmx_vmexit\n");
 	vti = (struct vmx_thread_info *) curthread->td_vmm;
 	ERROR_IF(vti == NULL);
@@ -1091,10 +1091,7 @@ vmx_handle_vmexit(void)
 
 						vti->guest.tf_rip += vti->vmexit_instruction_length;
 
-						tf_old = lp->lwp_md.md_regs;
-						lp->lwp_md.md_regs = &vti->guest;
 						syscall2(&vti->guest);
-						lp->lwp_md.md_regs = tf_old;
 
 						break;
 					case IDT_PF:
@@ -1113,10 +1110,13 @@ vmx_handle_vmexit(void)
 						vti->guest.tf_trapno = T_PAGEFLT;
 
 
-						tf_old = lp->lwp_md.md_regs;
-						lp->lwp_md.md_regs = &vti->guest;
-						vkernel_pagefault(&vti->guest);
-						lp->lwp_md.md_regs = tf_old;
+						if (lp->lwp_vkernel && lp->lwp_vkernel->ve) {
+							vkernel_trap(lp, &vti->guest);
+						} else {
+							get_mplock();
+							trapsignal(lp, SIGSEGV, SEGV_MAPERR);
+							rel_mplock();
+						}
 
 						break;
 					default:
@@ -1187,29 +1187,33 @@ vmx_vmrun(void)
 	struct globaldata *gd;
 	int err;
 	int ret;
+	int sticks = 0;
 	uint64_t val;
-	struct trapframe *tmp;
+	struct trapframe *save_frame;
+	thread_t td = curthread;
 
+	vti = (struct vmx_thread_info *) td->td_vmm;
+	save_frame = td->td_lwp->lwp_md.md_regs;
+	td->td_lwp->lwp_md.md_regs = &vti->guest;
 restart:
+	crit_enter();
+
+	trap_handle_userexit(&vti->guest, sticks);
+
 	gd = mycpu;
-	vti = (struct vmx_thread_info *) curthread->td_vmm;
 	ERROR2_IF(vti == NULL);
 	ERROR2_IF(vmx_check_cpu_migration());
 	ERROR2_IF(vmx_handle_cpu_migration());
 
-	crit_enter();
 	cpu_disable_intr();
 	splz();
 	if (gd->gd_reqflags & RQF_AST_MASK) {
 		atomic_clear_int(&gd->gd_reqflags, RQF_AST_SIGNAL);
-		tmp = curthread->td_lwp->lwp_md.md_regs;
-		curthread->td_lwp->lwp_md.md_regs = &vti->guest;
 		cpu_enable_intr();
 		crit_exit();
 		vti->guest.tf_trapno = T_ASTFLT;
 		trap(&vti->guest);
 		/* CURRENT CPU CAN CHANGE */
-		curthread->td_lwp->lwp_md.md_regs = tmp;
 		goto restart;
 	}
 	if (vti->last_cpu != gd->gd_cpuid) {
@@ -1219,6 +1223,7 @@ restart:
 			gd->gd_cpuid, vti->last_cpu);
 		goto restart;
 	}
+
 	/*
 	 * Load specific Guest registers
 	 * GP registers will be loaded in vmx_launch/resume
@@ -1231,14 +1236,23 @@ restart:
 	ERROR_IF(vmwrite(VMCS_GUEST_CR3, (uint64_t) vti->guest_cr3));
 
 	/*
+	 * FPU
+	 */
+	if (mdcpu->gd_npxthread != td) {
+		if (mdcpu->gd_npxthread)
+			npxsave(mdcpu->gd_npxthread->td_savefpu);
+		npxdna();
+	}
+
+	/*
 	 * The kernel caches the MSR_FSBASE value in mdcpu->gd_user_fs.
 	 * A vmexit loads this unconditionally from the VMCS so make
 	 * sure it loads the correct value.
 	 */
 	ERROR_IF(vmwrite(VMCS_HOST_FS_BASE, mdcpu->gd_user_fs));
 
-	if (vti->eptgen != curthread->td_proc->p_vmspace->vm_pmap.pm_invgen) {
-		vti->eptgen = curthread->td_proc->p_vmspace->vm_pmap.pm_invgen;
+	if (vti->eptgen != td->td_proc->p_vmspace->vm_pmap.pm_invgen) {
+		vti->eptgen = td->td_proc->p_vmspace->vm_pmap.pm_invgen;
 
 		ERROR_IF(invept(INVEPT_TYPE_SINGLE_CONTEXT,
 		    (uint64_t*)&vti->invept_desc));
@@ -1253,6 +1267,10 @@ restart:
 		vti->launched = 1;
 		ret = vmx_launch(vti);
 	}
+
+	trap_handle_userenter(td);
+	sticks = td->td_sticks;
+
 	if (ret == VM_EXIT) {
 
 		ERROR_IF(vmx_vmexit_loadinfo());
@@ -1283,8 +1301,9 @@ done:
 	return 0;
 error:
 	cpu_enable_intr();
-	crit_exit();
 error2:
+	td->td_lwp->lwp_md.md_regs = save_frame;
+	crit_exit();
 	kprintf("VMM: vmx_vmrun failed\n");
 	return err;
 }

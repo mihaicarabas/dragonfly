@@ -208,11 +208,6 @@ cpu_send_ipiq(int dcpu)
 }
 
 void
-smp_invltlb(void)
-{
-}
-
-void
 single_cpu_ipi(int cpu, int vector, int delivery_mode)
 {
 	kprintf("XXX single_cpu_ipi\n");
