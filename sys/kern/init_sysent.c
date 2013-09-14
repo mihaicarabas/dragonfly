@@ -571,4 +571,5 @@ struct sysent sysent[] = {
 	{ AS(eaccess_args), (sy_call_t *)sys_eaccess },	/* 532 = eaccess */
 	{ AS(lpathconf_args), (sy_call_t *)sys_lpathconf },	/* 533 = lpathconf */
 	{ AS(vmm_guest_ctl_args), (sy_call_t *)sys_vmm_guest_ctl },	/* 534 = vmm_guest_ctl */
+	{ AS(vmm_guest_sync_addr_args), (sy_call_t *)sys_vmm_guest_sync_addr },	/* 535 = vmm_guest_sync_addr */
 };

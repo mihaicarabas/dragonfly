@@ -543,4 +543,5 @@ const char *syscallnames[] = {
 	"eaccess",			/* 532 = eaccess */
 	"lpathconf",			/* 533 = lpathconf */
 	"vmm_guest_ctl",			/* 534 = vmm_guest_ctl */
+	"vmm_guest_sync_addr",			/* 535 = vmm_guest_sync_addr */
 };

@@ -38,7 +38,7 @@
 #include <sys/memrange.h>
 #include <sys/tls.h>
 #include <sys/types.h>
-#include <sys/vmm_guest_ctl.h>
+#include <sys/vmm.h>
 
 #include <vm/vm_extern.h>
 #include <vm/vm_kern.h>

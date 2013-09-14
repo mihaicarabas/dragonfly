@@ -4,7 +4,7 @@
 #define MAX_NAME_LEN 256
 
 #include <sys/param.h>
-#include <sys/vmm_guest_ctl.h>
+#include <sys/vmm.h>
 
 #define ERROR_IF(func)					\
 	do {						\

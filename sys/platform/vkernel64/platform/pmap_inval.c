@@ -59,6 +59,7 @@
 
 #include <sys/mman.h>
 #include <sys/vmspace.h>
+#include <sys/vmm.h>
 
 #include <vm/vm.h>
 #include <vm/pmap.h>
@@ -80,6 +81,7 @@ static __inline
 void
 vmm_cpu_invltlb(void)
 {
+	/* For VMM mode forces vmmexit/resume */
 	uint64_t rax = -1;
 	__asm __volatile("syscall;"
 			:
@@ -94,9 +96,7 @@ static __inline
 void
 pmap_inval_cpu(struct pmap *pmap, vm_offset_t va, size_t bytes)
 {
-	if (vmm_enabled) {
-		vmm_cpu_invltlb(); /* For VMM mode forces vmmexit/resume */
-	} else if (pmap == &kernel_pmap) {
+	if (pmap == &kernel_pmap) {
 		madvise((void *)va, bytes, MADV_INVAL);
 	} else {
 		vmspace_mcontrol(pmap, (void *)va, bytes, MADV_INVAL, 0);
@@ -117,13 +117,9 @@ pmap_inval_cpu(struct pmap *pmap, vm_offset_t va, size_t bytes)
 void
 pmap_inval_pte(volatile vpte_t *ptep, struct pmap *pmap, vm_offset_t va)
 {
+	vpte_t pte = 0;
 	if (vmm_enabled) {
-		pmap_inval_info info;
-		pmap_inval_init(&info);
-		pmap_inval_interlock(&info, pmap, va);
-		*ptep = 0;
-		pmap_inval_deinterlock(&info, pmap);
-		pmap_inval_done(&info);
+		vmm_guest_sync_addr((long)ptep, (long)&pte);
 	} else {
 		*ptep = 0;
 		pmap_inval_cpu(pmap, va, PAGE_SIZE);
@@ -138,7 +134,10 @@ void
 pmap_inval_pte_quick(volatile vpte_t *ptep, struct pmap *pmap, vm_offset_t va)
 {
 	*ptep = 0;
-	pmap_inval_cpu(pmap, va, PAGE_SIZE);
+	if (vmm_enabled)
+		vmm_cpu_invltlb();
+	else
+		pmap_inval_cpu(pmap, va, PAGE_SIZE);
 }
 
 /*
@@ -149,13 +148,10 @@ pmap_inval_pte_quick(volatile vpte_t *ptep, struct pmap *pmap, vm_offset_t va)
 void
 pmap_inval_pde(volatile vpte_t *ptep, struct pmap *pmap, vm_offset_t va)
 {
+	vpte_t pte = 0;
+
 	if (vmm_enabled) {
-		pmap_inval_info info;
-		pmap_inval_init(&info);
-		pmap_inval_interlock(&info, pmap, va);
-		*ptep = 0;
-		pmap_inval_deinterlock(&info, pmap);
-		pmap_inval_done(&info);
+		vmm_guest_sync_addr((long)ptep, (long)&pte);
 	} else {
 		*ptep = 0;
 		pmap_inval_cpu(pmap, va, SEG_SIZE);
@@ -190,13 +186,7 @@ pmap_clean_pte(volatile vpte_t *ptep, struct pmap *pmap, vm_offset_t va)
 	if (pte & VPTE_V) {
 		atomic_clear_long(ptep, VPTE_RW);
 		if (vmm_enabled) {
-			pmap_inval_info info;
-			pmap_inval_init(&info);
-			pmap_inval_interlock(&info, pmap, va);
-			pte = *ptep;
-			pmap_inval_deinterlock(&info, pmap);
-			pmap_inval_done(&info);
-
+			vmm_guest_sync_addr((long)&pte, (long)ptep);
 		} else {
 			pmap_inval_cpu(pmap, va, PAGE_SIZE);
 			pte = *ptep;
@@ -215,12 +205,7 @@ pmap_clean_pde(volatile vpte_t *ptep, struct pmap *pmap, vm_offset_t va)
 	if (pte & VPTE_V) {
 		atomic_clear_long(ptep, VPTE_RW);
 		if (vmm_enabled) {
-			pmap_inval_info info;
-			pmap_inval_init(&info);
-			pmap_inval_interlock(&info, pmap, va);
-			pte = *ptep;
-			pmap_inval_deinterlock(&info, pmap);
-			pmap_inval_done(&info);
+			vmm_guest_sync_addr((long)&pte, (long)ptep);
 		} else {
 
 			pmap_inval_cpu(pmap, va, SEG_SIZE);
@@ -241,18 +226,15 @@ vpte_t
 pmap_setro_pte(volatile vpte_t *ptep, struct pmap *pmap, vm_offset_t va)
 {
 	vpte_t pte;
+	vpte_t npte;
 
 	pte = *ptep;
 	if (pte & VPTE_V) {
 		pte = *ptep;
 		atomic_clear_long(ptep, VPTE_RW);
 		if (vmm_enabled) {
-			pmap_inval_info info;
-			pmap_inval_init(&info);
-			pmap_inval_interlock(&info, pmap, va);
-			pte |= *ptep & VPTE_M;
-			pmap_inval_deinterlock(&info, pmap);
-			pmap_inval_done(&info);
+			vmm_guest_sync_addr((long)&npte, (long)ptep);
+			pte |= npte & VPTE_M;
 		} else {
 			pmap_inval_cpu(pmap, va, PAGE_SIZE);
 			pte |= *ptep & VPTE_M;
@@ -272,18 +254,15 @@ pmap_inval_loadandclear(volatile vpte_t *ptep, struct pmap *pmap,
 			vm_offset_t va)
 {
 	vpte_t pte;
+	vpte_t npte;
 
 	pte = *ptep;
 	if (pte & VPTE_V) {
 		pte = *ptep;
 		atomic_clear_long(ptep, VPTE_RW);
 		if (vmm_enabled) {
-			pmap_inval_info info;
-			pmap_inval_init(&info);
-			pmap_inval_interlock(&info, pmap, va);
-			pte |= *ptep & (VPTE_A | VPTE_M);
-			pmap_inval_deinterlock(&info, pmap);
-			pmap_inval_done(&info);
+			vmm_guest_sync_addr((long)&npte, (long)ptep);
+			pte |= npte & (VPTE_A | VPTE_M);
 		} else {
 			pmap_inval_cpu(pmap, va, PAGE_SIZE);
 			pte |= *ptep & (VPTE_A | VPTE_M);
@@ -291,90 +270,6 @@ pmap_inval_loadandclear(volatile vpte_t *ptep, struct pmap *pmap,
 	}
 	*ptep = 0;
 	return(pte);
-}
-
-/* VMM used stuff */
-static void pmap_inval_callback(void *arg);
-
-/*
- * Initialize for add or flush
- *
- * The critical section is required to prevent preemption, allowing us to
- * set CPUMASK_LOCK on the pmap.  The critical section is also assumed
- * when lwkt_process_ipiq() is called.
- */
-void
-pmap_inval_init(pmap_inval_info_t info)
-{
-    info->pir_flags = 0;
-    crit_enter_id("inval");
-}
-
-/*
- * Add a (pmap, va) pair to the invalidation list and protect access
- * as appropriate.
- *
- * CPUMASK_LOCK is used to interlock thread switchins, otherwise another
- * cpu can switch in a pmap that we are unaware of and interfere with our
- * pte operation.
- */
-void
-pmap_inval_interlock(pmap_inval_info_t info, pmap_t pmap, vm_offset_t va)
-{
-    cpumask_t oactive;
-    cpumask_t nactive;
-
-    DEBUG_PUSH_INFO("pmap_inval_interlock");
-    for (;;) {
-	oactive = pmap->pm_active;
-	cpu_ccfence();
-	nactive = oactive | CPUMASK_LOCK;
-	if ((oactive & CPUMASK_LOCK) == 0 &&
-	    atomic_cmpset_cpumask(&pmap->pm_active, oactive, nactive)) {
-		break;
-	}
-	lwkt_process_ipiq();
-	cpu_pause();
-    }
-    DEBUG_POP_INFO();
-    KKASSERT((info->pir_flags & PIRF_CPUSYNC) == 0);
-    info->pir_va = va;
-    info->pir_flags = PIRF_CPUSYNC;
-    lwkt_cpusync_init(&info->pir_cpusync, oactive, pmap_inval_callback, info);
-    lwkt_cpusync_interlock(&info->pir_cpusync);
-}
-
-void
-pmap_inval_invltlb(pmap_inval_info_t info)
-{
-	info->pir_va = (vm_offset_t)-1;
-}
-
-void
-pmap_inval_deinterlock(pmap_inval_info_t info, pmap_t pmap)
-{
-	KKASSERT(info->pir_flags & PIRF_CPUSYNC);
-	atomic_clear_cpumask(&pmap->pm_active, CPUMASK_LOCK);
-	lwkt_cpusync_deinterlock(&info->pir_cpusync);
-	info->pir_flags = 0;
-}
-
-static void
-pmap_inval_callback(void *arg)
-{
-	pmap_inval_info_t info = arg;
-
-	if (info->pir_va == (vm_offset_t)-1)
-		cpu_invltlb();
-	else
-		cpu_invlpg((void *)info->pir_va);
-}
-
-void
-pmap_inval_done(pmap_inval_info_t info)
-{
-    KKASSERT((info->pir_flags & PIRF_CPUSYNC) == 0);
-    crit_exit_id("inval");
 }
 
 /*

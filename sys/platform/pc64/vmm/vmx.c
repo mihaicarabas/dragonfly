@@ -5,7 +5,7 @@
 #include <sys/thread.h>
 #include <sys/thread2.h>
 #include <sys/sysctl.h>
-#include <sys/vmm_guest_ctl.h>
+#include <sys/vmm.h>
 #include <sys/proc.h>
 #include <sys/syscall.h>
 #include <sys/wait.h>
@@ -1323,6 +1323,8 @@ restart:
 		    (uint64_t*)&vti->invept_desc));
 	}
 
+	atomic_set_cpumask(&td->td_proc->p_vmm_cpumask, gd->gd_cpumask);
+
 	if (vti->launched) { /* vmresume called from vmx_trap.s */
 		dkprintf("\n\nVMM: vmx_vmrun: vmx_resume\n");
 		ret = vmx_resume(vti);
@@ -1333,8 +1335,7 @@ restart:
 		ret = vmx_launch(vti);
 	}
 
-	trap_handle_userenter(td);
-	sticks = td->td_sticks;
+	atomic_clear_cpumask(&td->td_proc->p_vmm_cpumask, gd->gd_cpumask);
 
 	/*
 	 * This is our return point from the vmlaunch/vmresume
@@ -1351,6 +1352,8 @@ restart:
 		ERROR_IF(vmx_vmexit_loadinfo());
 
 		cpu_enable_intr();
+		trap_handle_userenter(td);
+		sticks = td->td_sticks;
 		crit_exit();
 
 		/*

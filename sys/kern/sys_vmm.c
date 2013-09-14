@@ -4,7 +4,7 @@
 #include <sys/proc.h>
 #include <sys/user.h>
 #include <sys/wait.h>
-#include <sys/vmm_guest_ctl.h>
+#include <sys/vmm.h>
 
 #include <sys/thread2.h>
 #include <sys/spinlock2.h>
@@ -92,3 +92,43 @@ out:
 	return (error);
 }
 
+int
+sys_vmm_guest_sync_addr(struct vmm_guest_sync_addr_args *uap)
+{
+	int error = 0;
+	struct lwkt_cpusync pir_cpusync;
+	cpumask_t oactive;
+	cpumask_t nactive;
+	long val;
+	struct proc *p = curproc;
+	
+	if (p->p_vmm)
+		return ENOSYS;
+
+	crit_enter_id("inval");
+
+	for (;;) {
+		oactive = p->p_vmm_cpumask;
+		cpu_ccfence();
+		nactive = oactive | CPUMASK_LOCK;
+		if ((oactive & CPUMASK_LOCK) == 0 &&
+			atomic_cmpset_cpumask(&p->p_vmm_cpumask, oactive, nactive)) {
+			break;
+		}
+	lwkt_process_ipiq();
+	cpu_pause();
+	}
+	
+	lwkt_cpusync_init(&pir_cpusync, oactive, NULL, NULL);
+	lwkt_cpusync_interlock(&pir_cpusync);
+
+	copyin((void *)uap->srcaddr, &val, sizeof(long));
+	copyout(&val, (void *)uap->dstaddr, sizeof(long));
+
+	atomic_clear_cpumask(&p->p_vmm_cpumask, CPUMASK_LOCK);
+	lwkt_cpusync_deinterlock(&pir_cpusync);
+
+	crit_exit_id("inval");
+
+	return error;
+}

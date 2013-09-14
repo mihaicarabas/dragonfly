@@ -52,7 +52,7 @@
 #include <vm/vm_page.h>
 #include <vm/vm_map.h>
 #include <sys/mplock2.h>
-#include <sys/vmm_guest_ctl.h>
+#include <sys/vmm.h>
 
 #include <machine/cpu.h>
 #include <machine/globaldata.h>

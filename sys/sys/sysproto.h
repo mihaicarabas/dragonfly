@@ -2288,6 +2288,13 @@ struct	vmm_guest_ctl_args {
 	int	op;	char op_[PAD_(int)];
 	struct guest_options *	options;	char options_[PAD_(struct guest_options *)];
 };
+struct	vmm_guest_sync_addr_args {
+#ifdef _KERNEL
+	struct sysmsg sysmsg;
+#endif
+	long	dstaddr;	char dstaddr_[PAD_(long)];
+	long	srcaddr;	char srcaddr_[PAD_(long)];
+};
 
 #ifdef COMPAT_43
 
@@ -2896,6 +2903,7 @@ int	sys_linkat (struct linkat_args *);
 int	sys_eaccess (struct eaccess_args *);
 int	sys_lpathconf (struct lpathconf_args *);
 int	sys_vmm_guest_ctl (struct vmm_guest_ctl_args *);
+int	sys_vmm_guest_sync_addr (struct vmm_guest_sync_addr_args *);
 
 #endif /* !_SYS_SYSPROTO_H_ */
 #undef PAD_

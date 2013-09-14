@@ -1,7 +1,7 @@
 #include <sys/systm.h>
 #include <sys/malloc.h>
 #include <sys/thread.h>
-#include <sys/vmm_guest_ctl.h>
+#include <sys/vmm.h>
 
 #include <vm/pmap.h>
 
