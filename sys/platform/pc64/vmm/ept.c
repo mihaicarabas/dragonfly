@@ -196,8 +196,11 @@ ept_copyout(const void *kaddr, void *udaddr, size_t len)
 		udaddr = (char *)udaddr + n;
 		kaddr = (const char *)kaddr + n;
 		vm_page_dirty(m);
+#if 0
+		/* should not be needed */
 		cpu_invlpg((char *)lwbuf_kva(lwb) +
 			     ((vm_offset_t)udaddr & PAGE_MASK));
+#endif
 		lwbuf_free(lwb);
 		vm_page_unhold(m);
 	}

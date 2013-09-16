@@ -568,6 +568,9 @@ pmap_pte(pmap_t pmap, vm_offset_t va)
 /*
  * Of all the layers (PTE, PT, PD, PDP, PML4) the best one to cache is
  * the PT layer.  This will speed up core pmap operations considerably.
+ *
+ * NOTE: Can be called with the pmap spin lock held shared.  pm_pvhint
+ *	 race is ok.
  */
 static __inline
 void
@@ -1181,6 +1184,57 @@ pmap_extract(pmap_t pmap, vm_offset_t va)
 		}
 	}
 	return rtval;
+}
+
+/*
+ * Similar to extract but checks protections, SMP-friendly short-cut for
+ * vm_fault_page[_quick]().  Can return NULL to cause the caller to
+ * fall-through to the real fault code.
+ *
+ * The returned page, if not NULL, is held (and not busied).
+ */
+vm_page_t
+pmap_fault_page_quick(pmap_t pmap, vm_offset_t va, vm_prot_t prot)
+{
+	if (pmap && va < VM_MAX_USER_ADDRESS) {
+		pv_entry_t pt_pv;
+		pv_entry_t pte_pv;
+		pt_entry_t *ptep;
+		pt_entry_t req;
+		vm_page_t m;
+		int error;
+
+		req = pmap->pmap_bits[PG_V_IDX] |
+		      pmap->pmap_bits[PG_U_IDX];
+		if (prot & VM_PROT_WRITE)
+			req |= pmap->pmap_bits[PG_RW_IDX];
+
+		pt_pv = pv_find(pmap, pmap_pt_pindex(va));
+		if (pt_pv == NULL)
+			return (NULL);
+		ptep = pv_pte_lookup(pt_pv, pmap_pte_index(va));
+		if ((*ptep & req) != req) {
+			pv_drop(pt_pv);
+			return (NULL);
+		}
+		pte_pv = pv_get_try(pmap, pmap_pte_pindex(va), &error);
+		if (pte_pv && error == 0) {
+			m = pte_pv->pv_m;
+			vm_page_hold(m);
+			if (prot & VM_PROT_WRITE)
+				vm_page_dirty(m);
+			pv_put(pte_pv);
+		} else if (pte_pv) {
+			pv_drop(pte_pv);
+			m = NULL;
+		} else {
+			m = NULL;
+		}
+		pv_drop(pt_pv);
+		return(m);
+	} else {
+		return(NULL);
+	}
 }
 
 /*
@@ -2844,21 +2898,21 @@ pv_get_try(pmap_t pmap, vm_pindex_t pindex, int *errorp)
 {
 	pv_entry_t pv;
 
-	spin_lock(&pmap->pm_spin);
+	spin_lock_shared(&pmap->pm_spin);
 	if ((pv = pmap->pm_pvhint) == NULL || pv->pv_pindex != pindex)
 		pv = pv_entry_rb_tree_RB_LOOKUP(&pmap->pm_pvroot, pindex);
 	if (pv == NULL) {
-		spin_unlock(&pmap->pm_spin);
+		spin_unlock_shared(&pmap->pm_spin);
 		*errorp = 0;
 		return NULL;
 	}
 	if (pv_hold_try(pv)) {
 		pv_cache(pv, pindex);
-		spin_unlock(&pmap->pm_spin);
+		spin_unlock_shared(&pmap->pm_spin);
 		*errorp = 0;
 		return(pv);	/* lock succeeded */
 	}
-	spin_unlock(&pmap->pm_spin);
+	spin_unlock_shared(&pmap->pm_spin);
 	*errorp = 1;
 	return (pv);		/* lock failed */
 }
@@ -2872,7 +2926,7 @@ pv_find(pmap_t pmap, vm_pindex_t pindex)
 {
 	pv_entry_t pv;
 
-	spin_lock(&pmap->pm_spin);
+	spin_lock_shared(&pmap->pm_spin);
 
 	if ((pv = pmap->pm_pvhint) == NULL || pv->pv_pindex != pindex)
 		pv = pv_entry_rb_tree_RB_LOOKUP(&pmap->pm_pvroot, pindex);
@@ -2882,7 +2936,7 @@ pv_find(pmap_t pmap, vm_pindex_t pindex)
 	}
 	pv_hold(pv);
 	pv_cache(pv, pindex);
-	spin_unlock(&pmap->pm_spin);
+	spin_unlock_shared(&pmap->pm_spin);
 	return(pv);
 }
 

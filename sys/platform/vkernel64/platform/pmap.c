@@ -735,6 +735,17 @@ pmap_extract(pmap_t pmap, vm_offset_t va)
 }
 
 /*
+ * Similar to extract but checks protections, SMP-friendly short-cut for
+ * vm_fault_page[_quick]().
+ */
+vm_page_t
+pmap_fault_page_quick(pmap_t pmap __unused, vm_offset_t vaddr __unused,
+		      vm_prot_t prot __unused)
+{
+	return(NULL);
+}
+
+/*
  *	Routine:	pmap_kextract
  *	Function:
  *		Extract the physical page address associated

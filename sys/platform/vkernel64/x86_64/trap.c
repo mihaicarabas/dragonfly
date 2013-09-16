@@ -473,7 +473,6 @@ user_trap(struct trapframe *frame)
 		break;
 
 	case T_PAGEFLT:		/* page fault */
-		MAKEMPSAFE(have_mplock);
 		i = trap_pfault(frame, TRUE, eva);
 		if (i == -1 || i == 0)
 			goto out;
@@ -666,7 +665,6 @@ kernel_trap:
 
 	switch (type) {
 	case T_PAGEFLT:			/* page fault */
-		MAKEMPSAFE(have_mplock);
 		trap_pfault(frame, FALSE, eva);
 		goto out2;
 

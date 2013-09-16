@@ -1395,6 +1395,9 @@ lwkt_acquire(thread_t td)
 			td, td->td_flags);
 		retry = 10000000;
 	    }
+#ifdef _KERNEL_VIRTUAL
+	    pthread_yield();
+#endif
 	}
 	DEBUG_POP_INFO();
 	cpu_mfence();

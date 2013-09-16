@@ -46,7 +46,7 @@ get_pt_entry(struct vmspace *vm, pt_entry_t *pte, vm_offset_t addr, int index)
 	vm_page_t m;
 
 	m = vm_fault_page(&vm->vm_map, trunc_page(addr),
-	    VM_PROT_READ, VM_FAULT_NORMAL, &err);
+			  VM_PROT_READ, VM_FAULT_NORMAL, &err);
 	if (err) {
 		kprintf("%s: could not get addr %llx\n",
 		    __func__, (unsigned long long)addr);

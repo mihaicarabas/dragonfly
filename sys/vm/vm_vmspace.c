@@ -54,7 +54,6 @@
 #include <machine/vmm.h>
 
 #include <sys/sysref2.h>
-#include <sys/mplock2.h>
 
 static struct vmspace_entry *vkernel_find_vmspace(struct vkernel_proc *vkp,
 						  void *id);
@@ -111,8 +110,6 @@ sys_vmspace_create(struct vmspace_create_args *uap)
 	if (curthread->td_vmm)
 		return 0;
 
-	get_mplock();
-
 	/*
 	 * Create a new VMSPACE, disallow conflicting ids
 	 */
@@ -131,7 +128,7 @@ sys_vmspace_create(struct vmspace_create_args *uap)
 		error = 0;
 	}
 	lwkt_reltoken(&vkp->token);
-	rel_mplock();
+
 	return (error);
 }
 
@@ -147,7 +144,6 @@ sys_vmspace_destroy(struct vmspace_destroy_args *uap)
 	struct vmspace_entry *ve;
 	int error;
 
-	get_mplock();
 	if ((vkp = curproc->p_vkernel) == NULL) {
 		error = EINVAL;
 		goto done3;
@@ -166,7 +162,6 @@ sys_vmspace_destroy(struct vmspace_destroy_args *uap)
 done2:
 	lwkt_reltoken(&vkp->token);
 done3:
-	rel_mplock();
 	return(error);
 }
 
@@ -197,15 +192,16 @@ sys_vmspace_ctl(struct vmspace_ctl_args *uap)
 	if ((vkp = p->p_vkernel) == NULL)
 		return (EINVAL);
 
-	get_mplock();
-	lwkt_gettoken(&vkp->token);
-
-	/* If it's not a VMM thread don't bother looking for it's vmspace */
-	if (curthread->td_vmm == NULL)
+	/*
+	 * ve only matters when VMM is not used.
+	 */
+	if (curthread->td_vmm == NULL) {
+		lwkt_gettoken(&vkp->token);
 		if ((ve = vkernel_find_vmspace(vkp, uap->id)) == NULL) {
 			error = ENOENT;
 			goto done;
 		}
+	}
 
 	switch(uap->cmd) {
 	case VMSPACE_CTL_RUN:
@@ -249,7 +245,7 @@ sys_vmspace_ctl(struct vmspace_ctl_args *uap)
 		} else {
 			/* If it's a VMM thread just set the CR3. We also set the
 			 * vklp->ve to a key to be able to distinguish when a
-			 * vkernel user process runs and when not (when it's NULL
+			 * vkernel user process runs and when not (when it's NULL)
 			 */
 			if (curthread->td_vmm == NULL) {
 				vklp->ve = ve;
@@ -268,8 +264,8 @@ sys_vmspace_ctl(struct vmspace_ctl_args *uap)
 		break;
 	}
 done:
-	lwkt_reltoken(&vkp->token);
-	rel_mplock();
+	if (curthread->td_vmm == NULL)
+		lwkt_reltoken(&vkp->token);
 	return(error);
 }
 
@@ -335,7 +331,6 @@ sys_vmspace_munmap(struct vmspace_munmap_args *uap)
 	vm_map_t map;
 	int error;
 
-	get_mplock();
 	if ((vkp = curproc->p_vkernel) == NULL) {
 		error = EINVAL;
 		goto done3;
@@ -396,7 +391,6 @@ done1:
 done2:
 	lwkt_reltoken(&vkp->token);
 done3:
-	rel_mplock();
 	return (error);
 }
 
@@ -418,7 +412,6 @@ sys_vmspace_pread(struct vmspace_pread_args *uap)
 	struct vmspace_entry *ve;
 	int error;
 
-	get_mplock();
 	if ((vkp = curproc->p_vkernel) == NULL) {
 		error = EINVAL;
 		goto done3;
@@ -432,7 +425,6 @@ sys_vmspace_pread(struct vmspace_pread_args *uap)
 done2:
 	lwkt_reltoken(&vkp->token);
 done3:
-	rel_mplock();
 	return (error);
 }
 
@@ -454,7 +446,6 @@ sys_vmspace_pwrite(struct vmspace_pwrite_args *uap)
 	struct vmspace_entry *ve;
 	int error;
 
-	get_mplock();
 	if ((vkp = curproc->p_vkernel) == NULL) {
 		error = EINVAL;
 		goto done3;
@@ -468,7 +459,6 @@ sys_vmspace_pwrite(struct vmspace_pwrite_args *uap)
 done2:
 	lwkt_reltoken(&vkp->token);
 done3:
-	rel_mplock();
 	return (error);
 }
 
@@ -488,7 +478,6 @@ sys_vmspace_mcontrol(struct vmspace_mcontrol_args *uap)
 	vm_offset_t tmpaddr = (vm_offset_t)uap->addr + uap->len;
 	int error;
 
-	get_mplock();
 	if ((vkp = curproc->p_vkernel) == NULL) {
 		error = EINVAL;
 		goto done3;
@@ -536,7 +525,6 @@ done1:
 done2:
 	lwkt_reltoken(&vkp->token);
 done3:
-	rel_mplock();
 	return (error);
 }
 

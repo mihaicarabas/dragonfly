@@ -655,6 +655,20 @@ vm_fault_page(vm_map_t map, vm_offset_t vaddr, vm_prot_t fault_type,
 	fs.fault_flags = fault_flags;
 	KKASSERT((fault_flags & VM_FAULT_WIRE_MASK) == 0);
 
+	/*
+	 * Dive the pmap (concurrency possible).  If we find the
+	 * appropriate page we can terminate early and quickly.
+	 */
+	fs.m = pmap_fault_page_quick(map->pmap, vaddr, fault_type);
+	if (fs.m) {
+		*errorp = 0;
+		return(fs.m);
+	}
+
+	/*
+	 * Otherwise take a concurrency hit and do a formal page
+	 * fault.
+	 */
 	lwkt_gettoken(&map->token);
 
 RetryFault:
