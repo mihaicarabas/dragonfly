@@ -84,41 +84,62 @@ out:
 	return (error);
 }
 
+static
+void
+vmm_exit_vmm(void *dummy __unused)
+{
+}
+
 int
 sys_vmm_guest_sync_addr(struct vmm_guest_sync_addr_args *uap)
 {
 	int error = 0;
-	struct lwkt_cpusync pir_cpusync;
 	cpumask_t oactive;
 	cpumask_t nactive;
 	long val;
 	struct proc *p = curproc;
 	
-	if (p->p_vmm)
+	if (p->p_vmm == NULL)
 		return ENOSYS;
 
 	crit_enter_id("vmm_inval");
 
+	/*
+	 * Set CPUMASK_LOCK, spin if anyone else is trying to set CPUMASK_LOCK.
+	 */
 	for (;;) {
-		oactive = p->p_vmm_cpumask;
+		oactive = p->p_vmm_cpumask & ~CPUMASK_LOCK;
 		cpu_ccfence();
 		nactive = oactive | CPUMASK_LOCK;
-		if ((oactive & CPUMASK_LOCK) == 0 &&
-			atomic_cmpset_cpumask(&p->p_vmm_cpumask, oactive, nactive)) {
+		if (atomic_cmpset_cpumask(&p->p_vmm_cpumask, oactive, nactive))
 			break;
-		}
 		lwkt_process_ipiq();
 		cpu_pause();
 	}
-	
-	lwkt_cpusync_init(&pir_cpusync, oactive, NULL, NULL);
-	lwkt_cpusync_interlock(&pir_cpusync);
 
+	/*
+	 * Wait for other cpu's to exit VMM mode (for this vkernel).  No
+	 * new cpus will enter VMM mode while we hold the lock.  New waiters
+	 * may turn-up though so the wakeup() later on has to be
+	 * unconditional.
+	 */
+	if (oactive & mycpu->gd_other_cpus) {
+		lwkt_send_ipiq_mask(oactive & mycpu->gd_other_cpus,
+				    vmm_exit_vmm, NULL);
+		while (p->p_vmm_cpumask & ~CPUMASK_LOCK) {
+			lwkt_process_ipiq();
+			cpu_pause();
+		}
+	}
+
+	/*
+	 * Make the requested modification, wakeup any waiters.
+	 */
 	copyin(uap->srcaddr, &val, sizeof(long));
 	copyout(&val, uap->dstaddr, sizeof(long));
 
 	atomic_clear_cpumask(&p->p_vmm_cpumask, CPUMASK_LOCK);
-	lwkt_cpusync_deinterlock(&pir_cpusync);
+	wakeup(&p->p_vmm_cpumask);
 
 	crit_exit_id("vmm_inval");
 

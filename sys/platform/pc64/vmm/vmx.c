@@ -1237,6 +1237,8 @@ vmx_vmrun(void)
 	int ret;
 	int sticks = 0;
 	uint64_t val;
+	cpumask_t oactive;
+	cpumask_t nactive;
 	struct trapframe *save_frame;
 	thread_t td = curthread;
 
@@ -1246,14 +1248,18 @@ vmx_vmrun(void)
 restart:
 	crit_enter();
 
+	/*
+	 * This can change the cpu we are running on.
+	 */
 	trap_handle_userexit(&vti->guest, sticks);
-
 	gd = mycpu;
+
 	ERROR2_IF(vti == NULL);
 	ERROR2_IF(vmx_check_cpu_migration());
 	ERROR2_IF(vmx_handle_cpu_migration());
 
-	/* Make the state safe to VMENTER
+	/*
+	 * Make the state safe to VMENTER
 	 * - disable interrupts and check if there were any pending
 	 * - check for ASTFLTs
 	 * - loop again until there are no ASTFLTs
@@ -1272,8 +1278,41 @@ restart:
 	if (vti->last_cpu != gd->gd_cpuid) {
 		cpu_enable_intr();
 		crit_exit();
-		kprintf("VMM: vmx_vmrun: vti unexpectedly changed cpus %d->%d\n",
+		kprintf("VMM: vmx_vmrun: vti unexpectedly "
+			"changed cpus %d->%d\n",
 			gd->gd_cpuid, vti->last_cpu);
+		goto restart;
+	}
+
+	/*
+	 * Add us to the list of cpus running vkernel operations, interlock
+	 * against anyone trying to do an invalidation.
+	 */
+        for (;;) {
+                oactive = td->td_proc->p_vmm_cpumask;
+                cpu_ccfence();
+		if ((oactive & CPUMASK_LOCK) == 0) {
+			nactive = oactive | gd->gd_cpumask;
+			if (atomic_cmpset_cpumask(&td->td_proc->p_vmm_cpumask,
+						  oactive, nactive)) {
+				/* fast path */
+				break;
+			}
+			/* cmpset race */
+			cpu_pause();
+			continue;
+		}
+
+		/*
+		 * More complex.
+		 */
+		cpu_enable_intr();
+		tsleep_interlock(&td->td_proc->p_vmm_cpumask, 0);
+		if (td->td_proc->p_vmm_cpumask & CPUMASK_LOCK) {
+			tsleep(&td->td_proc->p_vmm_cpumask, PINTERLOCKED,
+			       "vmminvl", hz);
+		}
+		crit_exit();
 		goto restart;
 	}
 
@@ -1322,8 +1361,6 @@ restart:
 		ERROR_IF(invept(INVEPT_TYPE_SINGLE_CONTEXT,
 		    (uint64_t*)&vti->invept_desc));
 	}
-
-	atomic_set_cpumask(&td->td_proc->p_vmm_cpumask, gd->gd_cpumask);
 
 	if (vti->launched) { /* vmresume called from vmx_trap.s */
 		dkprintf("\n\nVMM: vmx_vmrun: vmx_resume\n");
@@ -1394,6 +1431,7 @@ error:
 error2:
 	trap_handle_userenter(td);
 	td->td_lwp->lwp_md.md_regs = save_frame;
+	atomic_clear_cpumask(&td->td_proc->p_vmm_cpumask, gd->gd_cpumask);
 	crit_exit();
 	kprintf("VMM: vmx_vmrun failed\n");
 	return err;
