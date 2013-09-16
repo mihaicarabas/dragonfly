@@ -21,7 +21,6 @@ int
 sys_vmm_guest_ctl(struct vmm_guest_ctl_args *uap)
 {
 	int error = 0;
-	int vmm_error = 0;
 	struct guest_options options;
 	struct trapframe *tf = uap->sysmsg_frame;
 	unsigned long stack_limit = USRSTACK;
@@ -70,15 +69,8 @@ sys_vmm_guest_ctl(struct vmm_guest_ctl_args *uap)
 
 			generic_lwp_return(curthread->td_lwp, tf);
 
-			vmm_error = vmm_vmrun();
+			error = vmm_vmrun();
 			
-			error = vmm_vmdestroy();
-			if (error) {
-				kprintf("sys_vmm_guest: vmm_vmdestroy failed\n");
-				if (vmm_error)
-					error = vmm_error;
-				goto out_exit;
-			}
 			break;
 		default:
 			kprintf("sys_vmm_guest: INVALID op\n");
@@ -105,7 +97,7 @@ sys_vmm_guest_sync_addr(struct vmm_guest_sync_addr_args *uap)
 	if (p->p_vmm)
 		return ENOSYS;
 
-	crit_enter_id("inval");
+	crit_enter_id("vmm_inval");
 
 	for (;;) {
 		oactive = p->p_vmm_cpumask;
@@ -115,8 +107,8 @@ sys_vmm_guest_sync_addr(struct vmm_guest_sync_addr_args *uap)
 			atomic_cmpset_cpumask(&p->p_vmm_cpumask, oactive, nactive)) {
 			break;
 		}
-	lwkt_process_ipiq();
-	cpu_pause();
+		lwkt_process_ipiq();
+		cpu_pause();
 	}
 	
 	lwkt_cpusync_init(&pir_cpusync, oactive, NULL, NULL);
@@ -128,7 +120,7 @@ sys_vmm_guest_sync_addr(struct vmm_guest_sync_addr_args *uap)
 	atomic_clear_cpumask(&p->p_vmm_cpumask, CPUMASK_LOCK);
 	lwkt_cpusync_deinterlock(&pir_cpusync);
 
-	crit_exit_id("inval");
+	crit_exit_id("vmm_inval");
 
 	return error;
 }

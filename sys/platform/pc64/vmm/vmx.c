@@ -1424,14 +1424,6 @@ vmx_lwp_return(struct lwp *lp, struct trapframe *frame)
 
 	vmrun_err = vmx_vmrun();
 
-	vmx_vmdestroy();
-
-	lwkt_gettoken(&lp->lwp_proc->p_token);
-	if (lp->lwp_proc->p_nthreads > 1) {
-		lwp_exit(0);    /* called w/ p_token held */
-		/* NOT REACHED */
-	}
-	lwkt_reltoken(&lp->lwp_proc->p_token);
 	exit1(W_EXITCODE(vmrun_err, 0));
 }
 
