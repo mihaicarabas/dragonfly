@@ -1061,7 +1061,8 @@ vmx_handle_vmexit(void)
 	int exception_number;
 	int err;
 	int func, regs[4];
-	int fault_type, gpa_prot, rv;
+	int fault_type, rv;
+	int fault_flags = 0;
 	struct lwp *lp = curthread->td_lwp;
 
 	dkprintf("VMM: handle_vmx_vmexit\n");
@@ -1199,17 +1200,20 @@ vmx_handle_vmexit(void)
 			 * - get the fault address (which is a GPA)
 			 * - execute vm_fault on the vm_map
 			 */
-			fault_type = vmx_ept_fault_type(vti->vmexit_qualification);
-
 			dkprintf("VMM: handle_vmx_vmexit: EXIT_REASON_EPT_FAULT with qualification %lld,"
 			    "GPA: %llx, fault_Type: %d\n",(long long) vti->vmexit_qualification,
 			    (unsigned long long) vti->guest_physical_address, fault_type);
 
 			fault_type = vmx_ept_fault_type(vti->vmexit_qualification);
-			gpa_prot = vmx_ept_gpa_prot(vti->vmexit_qualification);
+
+			if (fault_type & VM_PROT_WRITE)
+				fault_flags = VM_FAULT_DIRTY;
+			else
+				fault_flags = VM_FAULT_NORMAL;
 
 			rv = vm_fault(&curthread->td_lwp->lwp_vmspace->vm_map,
-			    trunc_page(vti->guest_physical_address), fault_type, VM_FAULT_NORMAL);
+			    trunc_page(vti->guest_physical_address), fault_type, fault_flags);
+
 			if (rv != KERN_SUCCESS) {
 				kprintf("VMM: handle_vmx_vmexit: EXIT_REASON_EPT_FAULT couldn't resolve %llx\n",
 				    (unsigned long long) vti->guest_physical_address);
