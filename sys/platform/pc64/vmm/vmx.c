@@ -3,6 +3,7 @@
  *
  * This code is derived from software contributed to The DragonFly Project
  * by Mihai Carabas <mihai.carabas@gmail.com>
+ * by Matthew Dillon <dillon@backplane.com>
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -1187,9 +1188,7 @@ vmx_handle_vmexit(void)
 						if (lp->lwp_vkernel && lp->lwp_vkernel->ve) {
 							vkernel_trap(lp, &vti->guest);
 						} else {
-							get_mplock();
 							trapsignal(lp, SIGSEGV, SEGV_MAPERR);
-							rel_mplock();
 						}
 
 						break;
