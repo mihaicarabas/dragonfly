@@ -132,7 +132,7 @@ procfs_rwmem(struct proc *curp, struct proc *p, struct uio *uio)
 		 */
 		if (curthread->td_vmm) {
 			register_t gpa;
-			vmm_vm_get_gpa(&gpa, (register_t) &pageno);
+			vmm_vm_get_gpa(&gpa, (register_t) pageno);
 			pageno = (vm_offset_t)gpa;
 		}
 
