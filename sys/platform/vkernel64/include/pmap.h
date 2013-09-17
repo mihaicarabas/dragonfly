@@ -211,6 +211,8 @@ void	*pmap_mapdev (vm_paddr_t, vm_size_t);
 void	pmap_page_set_memattr(vm_page_t m, vm_memattr_t ma);
 void	pmap_unmapdev (vm_offset_t, vm_size_t);
 void	pmap_release(struct pmap *pmap);
+void	pmap_interlock_wait (struct vmspace *);
+
 struct vm_page *pmap_use_pt (pmap_t, vm_offset_t);
 
 static __inline int

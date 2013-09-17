@@ -298,7 +298,6 @@ ENTRY(cpu_exit_switch)
 ENTRY(cpu_heavy_restore)
 	popfq
 	movq	TD_PCB(%rax),%rdx		/* RDX = PCB */
-	movq	TD_LWP(%rax),%rcx
 
 #if defined(SWTCH_OPTIM_STATS)
 	incl	_swtch_optim_stats
@@ -308,10 +307,25 @@ ENTRY(cpu_heavy_restore)
 	 * safely test/reload %cr3 until after we have set the bit in the
 	 * pmap (remember, we do not hold the MP lock in the switch code).
 	 */
+	movq	TD_LWP(%rax),%rcx
 	movq	LWP_VMSPACE(%rcx), %rcx		/* RCX = vmspace */
-	movslq	PCPU(cpuid), %rsi
-	MPLOCKED btsq	%rsi, VM_PMAP+PM_ACTIVE(%rcx)
+	movq    %rax,%r12                       /* save newthread ptr */
+1:
+	movq    VM_PMAP+PM_ACTIVE(%rcx),%rax    /* old contents */
+	movq    PCPU(cpumask),%rsi              /* new contents */
+	orq     %rax,%rsi
+	MPLOCKED cmpxchgq %rsi,VM_PMAP+PM_ACTIVE(%rcx)
+	jnz     1b
 
+	btq	$CPUMASK_BIT,%rax
+	jnc	2f
+
+	movq    %rcx,%rdi               /* (found to be set) */
+	call    pmap_interlock_wait     /* pmap_interlock_wait(%rdi:vm) */
+	movq    %r12,%rax
+	movq    TD_PCB(%rax),%rdx       /* RDX = PCB */
+2:
+	movq	%r12,%rax
 	/*
 	 * Restore the MMU address space.  If it is the same as the last
 	 * thread we don't have to invalidate the tlb (i.e. reload cr3).

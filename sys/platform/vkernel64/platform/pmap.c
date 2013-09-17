@@ -96,6 +96,7 @@
 #include <stdio.h>
 #include <assert.h>
 #include <stdlib.h>
+#include <pthread.h>
 
 #define PMAP_KEEP_PDIRS
 #ifndef PMAP_SHPGPERPROC
@@ -3347,23 +3348,40 @@ pmap_setlwpvm(struct lwp *lp, struct vmspace *newvm)
 	struct vmspace *oldvm;
 	struct pmap *pmap;
 
-	crit_enter();
 	oldvm = lp->lwp_vmspace;
-
-	if (oldvm != newvm) {
-		lp->lwp_vmspace = newvm;
-		if (curthread->td_lwp == lp) {
-			pmap = vmspace_pmap(newvm);
-			atomic_set_cpumask(&pmap->pm_active, CPUMASK(mycpu->gd_cpuid));
+	if (oldvm == newvm)
+		return;
+	lp->lwp_vmspace = newvm;
+	if (curthread->td_lwp != lp)
+		return;
+	/*
+	 * NOTE: We don't have to worry about the CPULOCK here because
+	 *	 the virtual kernel doesn't call this function when VMM
+	 *	 is enabled (and depends on the host kernel when it isn't).
+	 */
+	crit_enter();
+	pmap = vmspace_pmap(newvm);
+	atomic_set_cpumask(&pmap->pm_active, CPUMASK(mycpu->gd_cpuid));
 #if defined(SWTCH_OPTIM_STATS)
-			tlb_flush_count++;
+	tlb_flush_count++;
 #endif
-			pmap = vmspace_pmap(oldvm);
-			atomic_clear_cpumask(&pmap->pm_active,
-					     CPUMASK(mycpu->gd_cpuid));
-		}
-	}
+	pmap = vmspace_pmap(oldvm);
+	atomic_clear_cpumask(&pmap->pm_active, CPUMASK(mycpu->gd_cpuid));
 	crit_exit();
+}
+
+/*
+ * The swtch code tried to switch in a heavy weight process whos pmap
+ * is locked by another cpu.  We have to wait for the lock to clear before
+ * the pmap can be used.
+ */
+void
+pmap_interlock_wait (struct vmspace *vm)
+{
+	pmap_t pmap = vmspace_pmap(vm);
+
+	while (pmap->pm_active & CPUMASK_LOCK)
+		pthread_yield();
 }
 
 vm_offset_t
