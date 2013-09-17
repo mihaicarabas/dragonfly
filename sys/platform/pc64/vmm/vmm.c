@@ -156,7 +156,7 @@ vmm_lwp_return(struct lwp *lp, struct trapframe *frame)
 }
 
 int
-vmm_vm_get_gpa(register_t *gpa, register_t uaddr)
+vmm_vm_get_gpa(struct proc *p, register_t *gpa, register_t uaddr)
 {
-	return ctl->vm_get_gpa(gpa, uaddr);
+	return ctl->vm_get_gpa(p, gpa, uaddr);
 }

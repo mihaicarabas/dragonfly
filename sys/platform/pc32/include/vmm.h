@@ -32,7 +32,7 @@ void vmm_vm_set_guest_cr3(register_t guest_cr3) {
 }
 
 static __inline
-int vmm_vm_get_gpa(register_t *gpa, register_t uaddr) {
+int vmm_vm_get_gpa(struct proc *p, register_t *gpa, register_t uaddr) {
 	*gpa = 0;
 	return 0;
 }

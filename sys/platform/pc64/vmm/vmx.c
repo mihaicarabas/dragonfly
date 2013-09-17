@@ -696,6 +696,7 @@ vmx_vminit_master(struct guest_options *options)
 
 	if (p->p_vkernel) {
 		p->p_vkernel->vkernel_cr3 = options->guest_cr3;
+		kprintf("PROCESS CR3 %016jx\n", (intmax_t)options->guest_cr3);
 	}
 
 	return 0;
@@ -1477,11 +1478,9 @@ vmx_set_guest_cr3(register_t guest_cr3)
 }
 
 static int
-vmx_vm_get_gpa(register_t *gpa, register_t uaddr)
+vmx_vm_get_gpa(struct proc *p, register_t *gpa, register_t uaddr)
 {
-	struct vmx_thread_info *vti = (struct vmx_thread_info *) curthread->td_vmm;
-
-	return guest_phys_addr(curproc->p_vmspace, gpa, vti->guest_cr3, uaddr);
+	return guest_phys_addr(p->p_vmspace, gpa, p->p_vkernel->vkernel_cr3, uaddr);
 }
 
 static struct vmm_ctl ctl_vmx = {

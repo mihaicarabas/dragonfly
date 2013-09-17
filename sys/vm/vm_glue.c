@@ -165,7 +165,7 @@ useracc(c_caddr_t addr, int len, int rw)
 	prot = rw;
 
 	if (curthread->td_vmm) {
-		if (vmm_vm_get_gpa((register_t *)&gpa, (register_t) addr))
+		if (vmm_vm_get_gpa(curproc, (register_t *)&gpa, (register_t) addr))
 			panic("%s: could not get GPA\n", __func__);
 		addr = (c_caddr_t) gpa;
 	}

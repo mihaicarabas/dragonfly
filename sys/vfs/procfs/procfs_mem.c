@@ -126,13 +126,13 @@ procfs_rwmem(struct proc *curp, struct proc *p, struct uio *uio)
 		page_offset = uva - pageno;
 
 		/*
-		 * If we are a VMM thread translate our address
-		 * into an GPA (Guest Physical Address) visible
-		 * to the EPT pmap
+		 * If the target process is running in VMM mode
+		 * translate the address into a GPA (Guest Physical
+		 * Address) via the EPT before doing the lookup.
 		 */
-		if (curthread->td_vmm) {
+		if (p->p_vmm) {
 			register_t gpa;
-			vmm_vm_get_gpa(&gpa, (register_t) pageno);
+			vmm_vm_get_gpa(p, &gpa, (register_t) pageno);
 			pageno = (vm_offset_t)gpa;
 		}
 

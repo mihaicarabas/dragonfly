@@ -113,7 +113,7 @@ sys_umtx_sleep(struct umtx_sleep_args *uap)
 
     if (curthread->td_vmm) {
 	register_t gpa;
-	vmm_vm_get_gpa(&gpa, (register_t) uap->ptr);
+	vmm_vm_get_gpa(curproc, &gpa, (register_t) uap->ptr);
 	uap->ptr = (const int *)gpa;
     }
 
@@ -204,7 +204,7 @@ sys_umtx_wakeup(struct umtx_wakeup_args *uap)
 
     if (curthread->td_vmm) {
 	register_t gpa;
-	vmm_vm_get_gpa(&gpa, (register_t) uap->ptr);
+	vmm_vm_get_gpa(curproc, &gpa, (register_t) uap->ptr);
 	uap->ptr = (const int *)gpa;
     }
 
