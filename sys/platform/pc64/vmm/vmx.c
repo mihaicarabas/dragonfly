@@ -731,7 +731,7 @@ vmx_vminit_master(struct guest_options *options)
 
 	if (p->p_vkernel) {
 		p->p_vkernel->vkernel_cr3 = options->guest_cr3;
-		kprintf("PROCESS CR3 %016jx\n", (intmax_t)options->guest_cr3);
+		dkprintf("PROCESS CR3 %016jx\n", (intmax_t)options->guest_cr3);
 	}
 
 	return 0;
@@ -1194,6 +1194,28 @@ vmx_handle_vmexit(void)
 						break;
 					default:
 						kprintf("VMM: handle_vmx_vmexit: VMCS_EXCEPTION_HARDWARE unknown "
+						    "number %d rip: %llx, rsp: %llx\n", exception_number,
+						    (long long)vti->guest.tf_rip, (long long)vti->guest.tf_rsp);
+						err = -1;
+						goto error;
+				}
+			} else if (exception_type == VMCS_EXCEPTION_SOFTWARE) {
+				switch (exception_number) {
+					case 3:
+						dkprintf("VMM: handle_vmx_vmexit: VMCS_EXCEPTION_SOFTWARE "
+						    "number %d rip: %llx, rsp: %llx\n", exception_number,
+						    (long long)vti->guest.tf_rip, (long long)vti->guest.tf_rsp);
+
+						vti->guest.tf_trapno = T_BPTFLT;
+						vti->guest.tf_xflags = 0;
+						vti->guest.tf_err = 0;
+						vti->guest.tf_addr = 0;
+
+						trap(&vti->guest);
+
+						break;
+					default:
+						kprintf("VMM: handle_vmx_vmexit: VMCS_EXCEPTION_SOFTWARE unknown "
 						    "number %d rip: %llx, rsp: %llx\n", exception_number,
 						    (long long)vti->guest.tf_rip, (long long)vti->guest.tf_rsp);
 						err = -1;
