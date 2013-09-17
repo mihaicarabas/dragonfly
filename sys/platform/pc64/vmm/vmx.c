@@ -724,8 +724,6 @@ vmx_vminit_master(struct guest_options *options)
 	vmspace_free(oldvmspace);
 
 	options->vmm_cr3 = vtophys(vmspace_pmap(newvmspace)->pm_pml4);
-	if (p->p_vmm)
-		print_backtrace(3);
 
 	p->p_vmm = curthread->td_vmm;
 
