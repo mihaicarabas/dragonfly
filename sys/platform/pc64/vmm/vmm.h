@@ -82,6 +82,11 @@ struct vmm_ctl {
 
 };
 
+struct vmm_proc {
+	uint64_t	guest_cr3;
+	uint64_t	vmm_cr3;
+};
+
 struct vmm_ctl* get_ctl_intel(void);
 struct vmm_ctl* get_ctl_amd(void);
 

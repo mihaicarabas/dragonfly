@@ -705,6 +705,7 @@ vmx_vminit_master(struct guest_options *options)
 	struct vmspace *oldvmspace;
 	struct vmspace *newvmspace;
 	struct proc *p = curthread->td_proc;
+	struct vmm_proc *p_vmm;
 
 	oldvmspace = curthread->td_lwp->lwp_vmspace;
 	newvmspace = vmspace_fork(oldvmspace);
@@ -725,7 +726,10 @@ vmx_vminit_master(struct guest_options *options)
 
 	options->vmm_cr3 = vtophys(vmspace_pmap(newvmspace)->pm_pml4);
 
-	p->p_vmm = curthread->td_vmm;
+	p_vmm = kmalloc(sizeof(struct vmm_proc), M_TEMP, M_WAITOK | M_ZERO);
+	p_vmm->guest_cr3 = options->guest_cr3;
+	p_vmm->vmm_cr3 = options->vmm_cr3;
+	p->p_vmm = (void *)p_vmm;
 
 	if (p->p_vkernel) {
 		p->p_vkernel->vkernel_cr3 = options->guest_cr3;
@@ -907,6 +911,7 @@ static int
 vmx_vmdestroy(void)
 {
 	struct vmx_thread_info *vti = curthread->td_vmm;
+	struct proc *p = curproc;
 	int error = -1;
 
 	if (vti != NULL) {
@@ -921,6 +926,11 @@ vmx_vmdestroy(void)
 			error = 0;
 		}
 		curthread->td_vmm = NULL;
+		lwkt_gettoken(&p->p_token);
+		if (p->p_nthreads == 1) {
+			kfree(p->p_vmm, M_TEMP);
+			p->p_vmm = NULL;
+		}
 	}
 	return error;
 }
@@ -1504,7 +1514,7 @@ vmx_lwp_return(struct lwp *lp, struct trapframe *frame)
 {
 	struct guest_options options;
 	int vmrun_err;
-	struct vmx_thread_info * master_vti = curproc->p_vmm;
+	struct vmm_proc *p_vmm = (struct vmm_proc *)curproc->p_vmm;
 
 	dkprintf("VMM: vmx_lwp_return \n");
 
@@ -1512,8 +1522,8 @@ vmx_lwp_return(struct lwp *lp, struct trapframe *frame)
 
 	bcopy(frame, &options.tf, sizeof(struct trapframe));
 
-	options.guest_cr3 = master_vti->guest_cr3;
-	options.vmm_cr3 = master_vti->vmm_cr3;
+	options.guest_cr3 = p_vmm->guest_cr3;
+	options.vmm_cr3 = p_vmm->vmm_cr3;
 
 	vmx_vminit(&options);
 	generic_lwp_return(lp, frame);
