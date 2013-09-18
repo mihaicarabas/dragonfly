@@ -1219,6 +1219,8 @@ vmx_handle_vmexit(void)
 						vti->guest.tf_err = 0;
 						vti->guest.tf_addr = 0;
 
+						vti->guest.tf_rip += vti->vmexit_instruction_length;
+
 						trap(&vti->guest);
 
 						break;
