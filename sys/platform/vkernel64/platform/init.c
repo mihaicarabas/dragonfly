@@ -52,6 +52,7 @@
 #include <vm/vm_page.h>
 #include <vm/vm_map.h>
 #include <sys/mplock2.h>
+#include <sys/wait.h>
 #include <sys/vmm.h>
 
 #include <machine/cpu.h>
@@ -80,6 +81,7 @@
 #include <errno.h>
 #include <assert.h>
 #include <sysexits.h>
+
 
 vm_paddr_t phys_avail[16];
 vm_paddr_t Maxmem;
@@ -172,6 +174,9 @@ int main(int ac, char **av) {
 	size_t vsize;
 	size_t kenv_size;
 	size_t kenv_size2;
+	pid_t pid;
+	int status;
+	struct sigaction sa;
 
 	/*
 	 * Currently a bad hack but rtld-elf needs LD_SHAREDLIB_BASE to
@@ -183,6 +188,20 @@ int main(int ac, char **av) {
 		execv(av[0], av);
 		fprintf(stderr, "Must run %s with full path\n", av[0]);
 		exit(1);
+	}
+
+	while ((pid = fork()) != 0) {
+		/* Ignore signals */
+		bzero(&sa, sizeof(sa));
+		sigemptyset(&sa.sa_mask);
+		sa.sa_handler = SIG_IGN;
+		sigaction(SIGINT, &sa, NULL);
+		sigaction(SIGQUIT, &sa, NULL);
+		sigaction(SIGHUP, &sa, NULL);
+
+		wait(&status);
+		if (WEXITSTATUS(status) != EX_REBOOT)
+			return 0;
 	}
 
 	/*
@@ -1505,7 +1524,8 @@ cpu_reset(void)
 	kprintf("cpu reset, rebooting vkernel\n");
 	closefrom(3);
 	cleanpid();
-	execv(save_av[0], save_av);
+	exit(EX_REBOOT);
+
 }
 
 void
