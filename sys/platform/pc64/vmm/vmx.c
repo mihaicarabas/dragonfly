@@ -798,7 +798,7 @@ vmx_vminit(struct guest_options *options)
 	ERROR_IF(vmwrite(VMCS_HOST_CR4, rcr4()));
 
 	/* Load HOST EFER and PAT */
-	ERROR_IF(vmwrite(VMCS_HOST_IA32_PAT, rdmsr(MSR_PAT)));
+//	ERROR_IF(vmwrite(VMCS_HOST_IA32_PAT, rdmsr(MSR_PAT)));
 	ERROR_IF(vmwrite(VMCS_HOST_IA32_EFER, rdmsr(MSR_EFER)));
 
 	/* Load HOST selectors */
