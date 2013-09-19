@@ -199,7 +199,14 @@ int main(int ac, char **av) {
 		sigaction(SIGQUIT, &sa, NULL);
 		sigaction(SIGHUP, &sa, NULL);
 
-		wait(&status);
+		/*
+		 * Wait for child to terminate, exit if
+		 * someone stole our child.
+		 */
+		while (waitpid(pid, &status, 0) != pid) {
+			if (errno == ECHILD)
+				exit(1);
+		}
 		if (WEXITSTATUS(status) != EX_REBOOT)
 			return 0;
 	}
