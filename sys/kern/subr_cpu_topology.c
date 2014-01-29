@@ -255,29 +255,37 @@ build_cpu_topology(void)
 #if defined(__x86_64__)
 
 	if (fix_amd_topology() == 0) {
-		int visited[MAXCPU];
-		int i;
-		int j, pos = 0;
+		int visited[MAXCPU], i, j, pos, cpuid;
+		cpu_node_t *leaf, *parent;
 
-		memset(visited, 0, MAXCPU * sizeof(int));
+		bzero(visited, MAXCPU * sizeof(int));
 
 		for (i = 0; i < ncpus; i++) {
 			if (visited[i] == 0) {
+				pos = 0;
 				visited[i] = 1;
-				cpu_node_t * leaf = get_cpu_node_by_cpuid(i);
+				leaf = get_cpu_node_by_cpuid(i);
+
 				if (leaf->type == CORE_LEVEL) {
-					cpu_node_t *parent = leaf->parent_node;
+					parent = leaf->parent_node;
+
 					last_free_node->child_node[0] = leaf;
 					last_free_node->child_no = 1;
+
 					for (j = 0; j < parent->child_no; j++) {
 						if (parent->child_node[j] != leaf) {
-							int cpuid = BSFCPUMASK(parent->child_node[j]->members);
+
+							cpuid = BSFCPUMASK(parent->child_node[j]->members);
+
 							if (visited[cpuid] == 0 &&
 							    parent->child_node[j]->compute_unit_id == leaf->compute_unit_id) {
+
 								last_free_node->child_node[last_free_node->child_no] = parent->child_node[j];
 								last_free_node->child_no++;
+
 								parent->child_node[j]->type = THREAD_LEVEL;
 								visited[cpuid] = 1;
+
 								migrate_elements(parent->child_node, parent->child_no, j);
 								parent->child_no--;
 								j--;
