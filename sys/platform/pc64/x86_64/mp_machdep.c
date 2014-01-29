@@ -1263,13 +1263,13 @@ amd_get_compute_unit_id(void *arg)
 	mynode->compute_unit_id = regs[1] & 0xff;
 }
 
-void
-fix_amd_topology(void *root)
+int
+fix_amd_topology(void)
 {
 	if (cpu_vendor_id != CPU_VENDOR_AMD)
-		return;
+		return -1;
 	if ((amd_feature2 & AMDID2_TOPOEXT) == 0)
-		return;
+		return -1;
 
 	lwkt_cpusync_simple(-1, amd_get_compute_unit_id, NULL);
 
@@ -1277,6 +1277,8 @@ fix_amd_topology(void *root)
 	int i;
 	for (i = 0; i < ncpus; i++)
 		kprintf("%d-%d; \n", i, get_cpu_node_by_cpuid(i)->compute_unit_id);
+
+	return 0;
 }
 
 /* Calculate

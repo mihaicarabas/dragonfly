@@ -82,7 +82,7 @@ extern cpumask_t		smp_active_mask;
 void detect_cpu_topology(void);
 
 /* Fix AMD CPU topology related to compute units */
-void fix_amd_topology(void *root);
+int fix_amd_topology(void);
 
 /* Interface functions for IDs calculation */
 int get_chip_ID(int cpuid);

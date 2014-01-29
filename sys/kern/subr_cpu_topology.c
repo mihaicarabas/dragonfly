@@ -136,6 +136,15 @@ build_topology_tree(int *children_no_per_level,
 	}
 }
 
+static void migrate_elements(cpu_node_t **a, int n, int pos) {
+	int i;
+
+	for (i = pos; i < n; i++) {
+		a[i] = a[i+1];
+	}
+	a[i] = NULL;
+}
+
 /* Build CPU topology. The detection is made by comparing the
  * chip, core and logical IDs of each CPU with the IDs of the 
  * BSP. When we found a match, at that level the CPUs are siblings.
@@ -244,7 +253,49 @@ build_cpu_topology(void)
 	}
 
 #if defined(__x86_64__)
-	fix_amd_topology((void *)root);
+
+	if (fix_amd_topology() == 0) {
+		int visited[MAXCPU];
+		int i;
+		int j, pos = 0;
+
+		memset(visited, 0, MAXCPU * sizeof(int));
+
+		for (i = 0; i < ncpus; i++) {
+			if (visited[i] == 0) {
+				visited[i] = 1;
+				cpu_node_t * leaf = get_cpu_node_by_cpuid(i);
+				if (leaf->type == CORE_LEVEL) {
+					cpu_node_t *parent = leaf->parent_node;
+					last_free_node->child_node[0] = leaf;
+					last_free_node->child_no = 1;
+					for (j = 0; j < parent->child_no; j++) {
+						if (parent->child_node[j] != leaf) {
+							int cpuid = BSFCPUMASK(parent->child_node[j]->members);
+							if (visited[cpuid] == 0 &&
+							    parent->child_node[j]->compute_unit_id == leaf->compute_unit_id) {
+								last_free_node->child_node[last_free_node->child_no] = parent->child_node[j];
+								last_free_node->child_no++;
+								parent->child_node[j]->type = THREAD_LEVEL;
+								visited[cpuid] = 1;
+								migrate_elements(parent->child_node, parent->child_no, j);
+								parent->child_no--;
+								j--;
+							}
+						} else {
+							pos = j;
+						}
+					}
+					if (last_free_node->child_no > 1) {
+						parent->child_node[pos] = last_free_node;
+						last_free_node->type = CORE_LEVEL;
+						leaf->type = THREAD_LEVEL;
+						last_free_node++;
+					}
+				}
+			}
+		}
+	}
 #endif
 
 	return root;
