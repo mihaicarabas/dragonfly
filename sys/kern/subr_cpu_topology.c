@@ -111,28 +111,28 @@ build_topology_tree(int *children_no_per_level,
 	node->members = 0;
 
 	if (node->child_no == 0) {
-		node->child_node = NULL;
 		*apicid = get_next_valid_apicid(*apicid);
 		node->members = CPUMASK(get_cpuid_from_apicid(*apicid));
 		return;
 	}
 
-	node->child_node = *last_free_node;
-	(*last_free_node) += node->child_no;
 	if (node->parent_node == NULL)
 		root_cpu_node = node;
 	
 	for (i = 0; i < node->child_no; i++) {
-		node->child_node[i].parent_node = node;
+		node->child_node[i] = *last_free_node;
+		(*last_free_node)++;
+
+		node->child_node[i]->parent_node = node;
 
 		build_topology_tree(children_no_per_level,
 		    level_types,
 		    cur_level + 1,
-		    &(node->child_node[i]),
+		    node->child_node[i],
 		    last_free_node,
 		    apicid);
 
-		node->members |= node->child_node[i].members;
+		node->members |= node->child_node[i]->members;
 	}
 }
 
@@ -243,6 +243,10 @@ build_cpu_topology(void)
 
 	}
 
+#if defined(__x86_64__)
+	fix_amd_topology((void *)root);
+#endif
+
 	return root;
 }
 
@@ -291,7 +295,7 @@ print_cpu_topology_tree_sysctl_helper(cpu_node_t *node,
 	sbuf_printf(sb,"\n");
 
 	for (i = 0; i < node->child_no; i++) {
-		print_cpu_topology_tree_sysctl_helper(&(node->child_node[i]),
+		print_cpu_topology_tree_sysctl_helper(node->child_node[i],
 		    sb, buf, buf_len, i == (node->child_no -1));
 	}
 }
@@ -364,7 +368,7 @@ get_cpu_node_by_cpumask(cpu_node_t * node,
 	}
 
 	for (i = 0; i < node->child_no; i++) {
-		found = get_cpu_node_by_cpumask(&(node->child_node[i]), mask);
+		found = get_cpu_node_by_cpumask(node->child_node[i], mask);
 		if (found != NULL) {
 			return found;
 		}
