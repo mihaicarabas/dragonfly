@@ -149,7 +149,7 @@ static void migrate_elements(cpu_node_t **a, int n, int pos) {
  * chip, core and logical IDs of each CPU with the IDs of the 
  * BSP. When we found a match, at that level the CPUs are siblings.
  */
-static cpu_node_t *
+static void
 build_cpu_topology(void)
 {
 	detect_cpu_topology();
@@ -252,6 +252,8 @@ build_cpu_topology(void)
 
 	}
 
+	cpu_root_node = root;
+
 #if defined(__x86_64__)
 
 	if (fix_amd_topology() == 0) {
@@ -305,8 +307,6 @@ build_cpu_topology(void)
 		}
 	}
 #endif
-
-	return root;
 }
 
 /* Recursive function helper to print the CPU topology tree */
@@ -623,7 +623,7 @@ build_sysctl_cpu_topology(void)
 static void
 init_cpu_topology(void)
 {
-	cpu_root_node = build_cpu_topology();
+	build_cpu_topology();
 
 	init_pcpu_topology_sysctl();
 	build_sysctl_cpu_topology();
