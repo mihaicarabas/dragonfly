@@ -139,7 +139,7 @@ build_topology_tree(int *children_no_per_level,
 static void migrate_elements(cpu_node_t **a, int n, int pos) {
 	int i;
 
-	for (i = pos; i < n; i++) {
+	for (i = pos; i < n - 1 ; i++) {
 		a[i] = a[i+1];
 	}
 	a[i] = NULL;
@@ -273,17 +273,18 @@ build_cpu_topology(void)
 
 					last_free_node->child_node[0] = leaf;
 					last_free_node->child_no = 1;
+					last_free_node->members = leaf->members;
 
 					for (j = 0; j < parent->child_no; j++) {
 						if (parent->child_node[j] != leaf) {
 
 							cpuid = BSFCPUMASK(parent->child_node[j]->members);
-
 							if (visited[cpuid] == 0 &&
 							    parent->child_node[j]->compute_unit_id == leaf->compute_unit_id) {
 
 								last_free_node->child_node[last_free_node->child_no] = parent->child_node[j];
 								last_free_node->child_no++;
+								last_free_node->members |= parent->child_node[j]->members;
 
 								parent->child_node[j]->type = THREAD_LEVEL;
 								visited[cpuid] = 1;
