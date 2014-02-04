@@ -276,6 +276,8 @@ build_cpu_topology(void)
 					last_free_node->child_no = 1;
 					last_free_node->members = leaf->members;
 					last_free_node->compute_unit_id = leaf->compute_unit_id;
+					last_free_node->parent_node = parent;
+					last_free_node->type = CORE_LEVEL;
 
 
 					for (j = 0; j < parent->child_no; j++) {
@@ -290,6 +292,7 @@ build_cpu_topology(void)
 								last_free_node->members |= parent->child_node[j]->members;
 
 								parent->child_node[j]->type = THREAD_LEVEL;
+								parent->child_node[j]->parent_node = last_free_node;
 								visited[cpuid] = 1;
 
 								migrate_elements(parent->child_node, parent->child_no, j);
@@ -302,8 +305,8 @@ build_cpu_topology(void)
 					}
 					if (last_free_node->child_no > 1) {
 						parent->child_node[pos] = last_free_node;
-						last_free_node->type = CORE_LEVEL;
 						leaf->type = THREAD_LEVEL;
+						leaf->parent_node = last_free_node;
 						last_free_node++;
 					}
 				}
