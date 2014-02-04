@@ -109,6 +109,7 @@ build_topology_tree(int *children_no_per_level,
 	node->child_no = children_no_per_level[cur_level];
 	node->type = level_types[cur_level];
 	node->members = 0;
+	node->compute_unit_id = -1;
 
 	if (node->child_no == 0) {
 		*apicid = get_next_valid_apicid(*apicid);
@@ -254,8 +255,8 @@ build_cpu_topology(void)
 
 	cpu_root_node = root;
 
-#if defined(__x86_64__)
 
+#if defined(__x86_64__)
 	if (fix_amd_topology() == 0) {
 		int visited[MAXCPU], i, j, pos, cpuid;
 		cpu_node_t *leaf, *parent;
@@ -274,6 +275,8 @@ build_cpu_topology(void)
 					last_free_node->child_node[0] = leaf;
 					last_free_node->child_no = 1;
 					last_free_node->members = leaf->members;
+					last_free_node->compute_unit_id = leaf->compute_unit_id;
+
 
 					for (j = 0; j < parent->child_no; j++) {
 						if (parent->child_node[j] != leaf) {
@@ -340,11 +343,21 @@ print_cpu_topology_tree_sysctl_helper(cpu_node_t *node,
 		sbuf_printf(sb,"CHIP ID %d: ",
 			get_chip_ID(bsr_member));
 	} else if (node->type == CORE_LEVEL) {
-		sbuf_printf(sb,"CORE ID %d: ",
-			get_core_number_within_chip(bsr_member));
+		if (node->compute_unit_id != -1) {
+			sbuf_printf(sb,"Compute Unit ID %d: ",
+				node->compute_unit_id);
+		} else {
+			sbuf_printf(sb,"CORE ID %d: ",
+				get_core_number_within_chip(bsr_member));
+		}
 	} else if (node->type == THREAD_LEVEL) {
-		sbuf_printf(sb,"THREAD ID %d: ",
-			get_logical_CPU_number_within_core(bsr_member));
+		if (node->compute_unit_id != -1) {
+			sbuf_printf(sb,"CORE ID %d: ",
+				get_core_number_within_chip(bsr_member));
+		} else {
+			sbuf_printf(sb,"THREAD ID %d: ",
+				get_logical_CPU_number_within_core(bsr_member));
+		}
 	} else {
 		sbuf_printf(sb,"UNKNOWN: ");
 	}
